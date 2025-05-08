@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Index - Criterion.rs</title>
+    <style type="text/css">
+        body {
+            font: 14px Helvetica Neue;
+            text-rendering: optimizelegibility;
+        }
+
+        .body {
+            width: 960px;
+            margin: auto;
+        }
+
+        a:link {
+            color: #1F78B4;
+            text-decoration: none;
+        }
+
+        h2 {
+            font-size: 36px;
+            font-weight: 300;
+        }
+
+        h3 {
+            font-size: 24px;
+            font-weight: 300;
+        }
+
+        #footer {
+            height: 40px;
+            background: #888;
+            color: white;
+            font-size: larger;
+            font-weight: 300;
+        }
+
+        #footer a {
+            color: white;
+            text-decoration: underline;
+        }
+
+        #footer p {
+            text-align: center
+        }
+
+        table {
+            border-collapse: collapse;
+        }
+
+        table,
+        th,
+        td {
+            border: 1px solid #888;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="body">
+        <h2>Criterion.rs Benchmark Index</h2>
+        See individual benchmark pages below for more details.
+        <ul>
+            <li><a href="../btreeindex\report/index.html">BTreeIndex</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th><a href="../btreeindex\insert\report/index.html">insert</a></th>
+                            <th><a href="../btreeindex\lookup\report/index.html">lookup</a></th>
+                            <th><a href="../btreeindex\range_scan\report/index.html">range_scan</a></th>
+                        </tr>
+                        <tr>
+                            <th><a href="../btreeindex\100\report/index.html">100</a></th>
+                            <td><a href="../btreeindex/insert/100\report/index.html">BTreeIndex/insert/100</a></td>
+                            <td><a href="../btreeindex/lookup/100\report/index.html">BTreeIndex/lookup/100</a></td>
+                            <td><a href="../btreeindex/range_scan/100\report/index.html">BTreeIndex/range_scan/100</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../btreeindex\500\report/index.html">500</a></th>
+                            <td><a href="../btreeindex/insert/500\report/index.html">BTreeIndex/insert/500</a></td>
+                            <td><a href="../btreeindex/lookup/500\report/index.html">BTreeIndex/lookup/500</a></td>
+                            <td><a href="../btreeindex/range_scan/500\report/index.html">BTreeIndex/range_scan/500</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../btreeindex\1000\report/index.html">1000</a></th>
+                            <td><a href="../btreeindex/insert/1000\report/index.html">BTreeIndex/insert/1000</a></td>
+                            <td><a href="../btreeindex/lookup/1000\report/index.html">BTreeIndex/lookup/1000</a></td>
+                            <td><a href="../btreeindex/range_scan/1000\report/index.html">BTreeIndex/range_scan/1000</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../bufferpool\report/index.html">BufferPool</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th><a href="../bufferpool\random_access\report/index.html">random_access</a></th>
+                            <th><a href="../bufferpool\sequential_access\report/index.html">sequential_access</a></th>
+                        </tr>
+                        <tr>
+                            <th><a href="../bufferpool\10\report/index.html">10</a></th>
+                            <td><a href="../bufferpool/random_access/10\report/index.html">BufferPool/random_access/10</a></td>
+                            <td><a href="../bufferpool/sequential_access/10\report/index.html">BufferPool/sequential_access/10</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../bufferpool\100\report/index.html">100</a></th>
+                            <td><a href="../bufferpool/random_access/100\report/index.html">BufferPool/random_access/100</a></td>
+                            <td><a href="../bufferpool/sequential_access/100\report/index.html">BufferPool/sequential_access/100</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../bufferpool\1000\report/index.html">1000</a></th>
+                            <td><a href="../bufferpool/random_access/1000\report/index.html">BufferPool/random_access/1000</a></td>
+                            <td><a href="../bufferpool/sequential_access/1000\report/index.html">BufferPool/sequential_access/1000</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+        </ul>
+    </div>
+    <div id="footer">
+        <p>This report was generated by
+            <a href="https://github.com/bheisler/criterion.rs">Criterion.rs</a>, a statistics-driven benchmarking
+            library in Rust.</p>
+    </div>
+</body>
+</html>
