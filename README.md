@@ -20,6 +20,10 @@ src/
 ├── query/          # (Future) Query processing
 ```
 
+## Development Roadmap
+
+The development roadmap for BayunDB can be found in [docs/roadmap.md](docs/roadmap.md), which outlines immediate next steps and longer-term goals for the project.
+
 ## Key Components
 
 - **Page Manager**: Manages the internal layout of database pages, including record insertion, deletion, and compaction.
