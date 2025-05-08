@@ -25,6 +25,14 @@ pub enum TokenType {
     DROP,
     ALTER,
     ADD,
+    JOIN,
+    INNER,
+    LEFT,
+    RIGHT,
+    FULL,
+    OUTER,
+    CROSS,
+    ON,
     
     // Literals
     STRING(String),
@@ -224,6 +232,14 @@ impl<'a> Lexer<'a> {
             "DROP" => TokenType::DROP,
             "ALTER" => TokenType::ALTER,
             "ADD" => TokenType::ADD,
+            "JOIN" => TokenType::JOIN,
+            "INNER" => TokenType::INNER,
+            "LEFT" => TokenType::LEFT,
+            "RIGHT" => TokenType::RIGHT,
+            "FULL" => TokenType::FULL,
+            "OUTER" => TokenType::OUTER,
+            "CROSS" => TokenType::CROSS,
+            "ON" => TokenType::ON,
             _ => TokenType::IDENTIFIER(ident.to_string()),
         }
     }

@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use crate::query::executor::result::{QueryResult, QueryResultSet, QueryError};
-use crate::query::parser::ast::{Statement, SelectStatement};
-use crate::query::planner::{Planner, physical};
+use crate::query::parser::ast::{Statement, SelectStatement, SelectColumn, ColumnReference, TableReference};
+use crate::query::planner::{Planner, physical, logical::LogicalPlan};
 use crate::storage::buffer::BufferPoolManager;
 
 /// The ExecutionEngine is responsible for executing parsed SQL queries
@@ -137,6 +137,7 @@ mod tests {
                 alias: None,
             }],
             where_clause: None,
+            joins: vec![],
         });
         
         // This will likely fail since we don't have a real table,
@@ -177,5 +178,43 @@ mod tests {
         // Even though filter is implemented, we're using a table scan that generates
         // fake data, so we can't test actual filtering logic here very well
         assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_execute_select() {
+        // Create a test database with temporary file
+        let (buffer_pool, _temp_file) = create_test_db();
+        
+        // Create execution engine
+        let engine = ExecutionEngine::new(buffer_pool);
+        
+        // Create a SELECT statement
+        let select = Statement::Select(SelectStatement {
+            columns: vec![
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "id".to_string(),
+                }),
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "name".to_string(),
+                }),
+            ],
+            from: vec![TableReference {
+                name: "users".to_string(),
+                alias: None,
+            }],
+            where_clause: None,
+            joins: vec![],
+        });
+        
+        // Try to build a plan
+        let result = engine.planner.create_logical_plan(&select);
+        
+        // Should succeed
+        assert!(result.is_ok());
+        
+        // Just verify the engine is created
+        assert!(engine.execute_query("SELECT * FROM test_table").is_ok());
     }
 } 

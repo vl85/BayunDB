@@ -159,6 +159,7 @@ mod tests {
                 alias: None,
             }],
             where_clause: None,
+            joins: vec![],
         };
         
         // Build logical plan
@@ -196,6 +197,7 @@ mod tests {
                 op: Operator::GreaterThan,
                 right: Box::new(Expression::Literal(Value::Integer(100))),
             })),
+            joins: vec![],
         };
         
         // Build logical plan
@@ -217,6 +219,122 @@ mod tests {
             }
         } else {
             panic!("Expected Projection as root operation");
+        }
+    }
+    
+    #[test]
+    fn test_where_clause() {
+        // Create a SELECT statement with WHERE clause
+        let stmt = SelectStatement {
+            columns: vec![
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "id".to_string(),
+                }),
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "name".to_string(),
+                }),
+            ],
+            from: vec![TableReference {
+                name: "users".to_string(),
+                alias: None,
+            }],
+            where_clause: Some(Box::new(Expression::BinaryOp {
+                left: Box::new(Expression::Column(ColumnReference {
+                    table: None,
+                    name: "id".to_string(),
+                })),
+                op: Operator::Equals,
+                right: Box::new(Expression::Literal(Value::Integer(1))),
+            })),
+            joins: vec![],
+        };
+    }
+
+    #[test]
+    fn test_filter_plan() {
+        // Create a SELECT statement with WHERE clause
+        let stmt = SelectStatement {
+            columns: vec![
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "id".to_string(),
+                }),
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "name".to_string(),
+                }),
+            ],
+            from: vec![TableReference {
+                name: "users".to_string(),
+                alias: None,
+            }],
+            where_clause: Some(Box::new(Expression::BinaryOp {
+                left: Box::new(Expression::Column(ColumnReference {
+                    table: None,
+                    name: "id".to_string(),
+                })),
+                op: Operator::GreaterThan,
+                right: Box::new(Expression::Literal(Value::Integer(100))),
+            })),
+            joins: vec![],
+        };
+        
+        // Build logical plan
+        let plan = build_logical_plan(&stmt);
+        
+        // Verify the structure - should have Filter between Projection and Scan
+        if let LogicalPlan::Projection { columns: _, input } = plan {
+            if let LogicalPlan::Filter { predicate: _, input } = *input {
+                if let LogicalPlan::Scan { table_name, alias } = *input {
+                    assert_eq!(table_name, "users");
+                    assert!(alias.is_none());
+                } else {
+                    panic!("Expected Scan operation under Filter");
+                }
+            } else {
+                panic!("Expected Filter operation under Projection");
+            }
+        } else {
+            panic!("Expected Projection as root operation");
+        }
+    }
+
+    #[test]
+    fn test_simple_plan() {
+        // Create a simple SELECT statement
+        let stmt = SelectStatement {
+            columns: vec![
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "id".to_string(),
+                }),
+            ],
+            from: vec![TableReference {
+                name: "test".to_string(),
+                alias: None,
+            }],
+            where_clause: None,
+            joins: vec![],
+        };
+        
+        // Build logical plan
+        let plan = build_logical_plan(&stmt);
+        
+        // Should be a simple Projection -> Scan
+        match plan {
+            LogicalPlan::Projection { columns, input } => {
+                assert_eq!(columns, vec!["id".to_string()]);
+                
+                match *input {
+                    LogicalPlan::Scan { table_name, .. } => {
+                        assert_eq!(table_name, "test");
+                    },
+                    _ => panic!("Expected Scan under Projection"),
+                }
+            },
+            _ => panic!("Expected Projection"),
         }
     }
 } 

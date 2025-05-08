@@ -127,6 +127,17 @@ impl Parser {
         // Parse FROM clause
         let from = self.parse_table_references()?;
         
+        // Parse optional JOIN clauses
+        let mut joins = Vec::new();
+        while self.current_token_is(TokenType::JOIN) || 
+              self.current_token_is(TokenType::INNER) ||
+              self.current_token_is(TokenType::LEFT) ||
+              self.current_token_is(TokenType::RIGHT) ||
+              self.current_token_is(TokenType::FULL) ||
+              self.current_token_is(TokenType::CROSS) {
+            joins.push(self.parse_join_clause()?);
+        }
+        
         // Parse optional WHERE clause
         let where_clause = if self.current_token_is(TokenType::WHERE) {
             self.next_token(); // Consume WHERE
@@ -144,6 +155,7 @@ impl Parser {
             columns,
             from,
             where_clause,
+            joins,
         }))
     }
     
@@ -358,6 +370,127 @@ impl Parser {
         }
     }
     
+    /// Parse a JOIN clause
+    fn parse_join_clause(&mut self) -> ParseResult<JoinClause> {
+        // Parse join type
+        let join_type = self.parse_join_type()?;
+        
+        // Parse the table being joined
+        let table = self.parse_table_reference()?;
+        
+        // Expect ON keyword
+        self.expect_token(TokenType::ON)?;
+        
+        // Parse join condition
+        let condition = Box::new(self.parse_expression(0)?);
+        
+        Ok(JoinClause {
+            join_type,
+            table,
+            condition,
+        })
+    }
+    
+    /// Parse the type of JOIN
+    fn parse_join_type(&mut self) -> ParseResult<JoinType> {
+        // Default join type is INNER
+        let mut join_type = JoinType::Inner;
+        
+        // Check for different join types
+        match &self.current_token {
+            Some(token) => {
+                match &token.token_type {
+                    TokenType::JOIN => {
+                        // Just plain JOIN means INNER JOIN
+                        self.next_token();
+                    },
+                    TokenType::INNER => {
+                        self.next_token(); // Consume INNER
+                        self.expect_token(TokenType::JOIN)?; // Expect JOIN
+                    },
+                    TokenType::LEFT => {
+                        self.next_token(); // Consume LEFT
+                        
+                        // OUTER is optional in LEFT OUTER JOIN
+                        if self.current_token_is(TokenType::OUTER) {
+                            self.next_token(); // Consume OUTER
+                        }
+                        
+                        self.expect_token(TokenType::JOIN)?; // Expect JOIN
+                        join_type = JoinType::LeftOuter;
+                    },
+                    TokenType::RIGHT => {
+                        self.next_token(); // Consume RIGHT
+                        
+                        // OUTER is optional in RIGHT OUTER JOIN
+                        if self.current_token_is(TokenType::OUTER) {
+                            self.next_token(); // Consume OUTER
+                        }
+                        
+                        self.expect_token(TokenType::JOIN)?; // Expect JOIN
+                        join_type = JoinType::RightOuter;
+                    },
+                    TokenType::FULL => {
+                        self.next_token(); // Consume FULL
+                        
+                        // OUTER is optional in FULL OUTER JOIN
+                        if self.current_token_is(TokenType::OUTER) {
+                            self.next_token(); // Consume OUTER
+                        }
+                        
+                        self.expect_token(TokenType::JOIN)?; // Expect JOIN
+                        join_type = JoinType::FullOuter;
+                    },
+                    TokenType::CROSS => {
+                        self.next_token(); // Consume CROSS
+                        self.expect_token(TokenType::JOIN)?; // Expect JOIN
+                        join_type = JoinType::Cross;
+                    },
+                    _ => {
+                        return Err(ParseError::UnexpectedToken(token.clone()));
+                    }
+                }
+            },
+            None => return Err(ParseError::EndOfInput),
+        }
+        
+        Ok(join_type)
+    }
+    
+    /// Parse a single table reference
+    fn parse_table_reference(&mut self) -> ParseResult<TableReference> {
+        match &self.current_token {
+            Some(token) => {
+                if let TokenType::IDENTIFIER(name) = &token.token_type {
+                    let table_name = name.clone();
+                    self.next_token();
+                    
+                    // Check for optional alias
+                    let alias = match &self.current_token {
+                        Some(token) => {
+                            if let TokenType::IDENTIFIER(alias_name) = &token.token_type {
+                                let name = alias_name.clone();
+                                self.next_token();
+                                Some(name)
+                            } else {
+                                None
+                            }
+                        },
+                        None => None,
+                    };
+                    
+                    Ok(TableReference {
+                        name: table_name,
+                        alias,
+                    })
+                } else {
+                    Err(ParseError::UnexpectedToken(token.clone()))
+                }
+            },
+            None => Err(ParseError::EndOfInput),
+        }
+    }
+    
     // Placeholder implementations for other statement types
     fn parse_insert(&mut self) -> ParseResult<Statement> {
         Err(ParseError::InvalidSyntax("INSERT not implemented yet".to_string()))
@@ -468,6 +601,45 @@ mod tests {
                     panic!("Expected binary operation in WHERE clause");
                 }
             }
+        } else {
+            panic!("Expected SELECT statement");
+        }
+    }
+    
+    #[test]
+    fn test_parse_join() {
+        let query = "SELECT u.id, u.name, o.order_id FROM users u JOIN orders o ON u.id = o.user_id";
+        let mut parser = Parser::new(query);
+        
+        let statement = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = statement {
+            assert_eq!(select.columns.len(), 3);
+            assert_eq!(select.from.len(), 1);
+            assert_eq!(select.joins.len(), 1);
+            
+            let join = &select.joins[0];
+            assert_eq!(join.join_type, JoinType::Inner);
+            assert_eq!(join.table.name, "orders");
+            assert_eq!(join.table.alias, Some("o".to_string()));
+        } else {
+            panic!("Expected SELECT statement");
+        }
+    }
+    
+    #[test]
+    fn test_parse_left_join() {
+        let query = "SELECT u.id, u.name, o.order_id FROM users u LEFT JOIN orders o ON u.id = o.user_id";
+        let mut parser = Parser::new(query);
+        
+        let statement = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = statement {
+            assert_eq!(select.joins.len(), 1);
+            
+            let join = &select.joins[0];
+            assert_eq!(join.join_type, JoinType::LeftOuter);
+            assert_eq!(join.table.name, "orders");
         } else {
             panic!("Expected SELECT statement");
         }

@@ -19,6 +19,14 @@ harness = false
 name = "btree_bench"
 harness = false
 
+[[bench]]
+name = "query_parser_bench"
+harness = false
+
+[[test]]
+name = "query_processing_test"
+path = "tests/integration/query_processing_test.rs"
+
 [dependencies]
 thiserror = "1.0"
 anyhow = "1.0"
