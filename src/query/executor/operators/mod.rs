@@ -5,17 +5,10 @@
 
 // Re-export public components
 pub mod scan;
-// Placeholder modules - will be implemented later
-pub mod filter {
-    use std::sync::{Arc, Mutex};
-    use crate::query::executor::operators::Operator;
-    use crate::query::executor::result::QueryResult;
-    
-    pub fn create_filter(_input: Arc<Mutex<dyn Operator>>, _predicate: String) -> QueryResult<Arc<Mutex<dyn Operator>>> {
-        unimplemented!("Filter operator not yet implemented")
-    }
-}
+pub mod filter;
+pub mod project;
 
+// Placeholder modules - will be implemented later
 pub mod join {
     // Placeholder implementation
 }
@@ -49,4 +42,8 @@ pub fn create_table_scan(table_name: &str) -> QueryResult<Arc<Mutex<dyn Operator
 
 pub fn create_filter(input: Arc<Mutex<dyn Operator>>, predicate: String) -> QueryResult<Arc<Mutex<dyn Operator>>> {
     filter::create_filter(input, predicate)
+}
+
+pub fn create_projection(input: Arc<Mutex<dyn Operator>>, columns: Vec<String>) -> QueryResult<Arc<Mutex<dyn Operator>>> {
+    project::create_projection(input, columns)
 } 

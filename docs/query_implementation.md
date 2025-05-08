@@ -45,41 +45,41 @@ src/query/
 
 ## Phase 2: Logical Planning
 
-- [ ] Define logical operator interfaces
-  - [ ] LogicalScan
-  - [ ] LogicalFilter
-  - [ ] LogicalProjection
-- [ ] Implement logical plan builder from AST
-- [ ] Add type checking and semantic analysis
-  - [ ] Column reference resolution
-  - [ ] Type compatibility in expressions
-  - [ ] Table existence verification
-- [ ] Implement WHERE clause predicate analysis
-- [ ] Add logical plan visualization for debugging
-- [ ] Create tests for logical planning
+- [x] Define logical operator interfaces
+  - [x] LogicalScan
+  - [x] LogicalFilter
+  - [x] LogicalProjection
+- [x] Implement logical plan builder from AST
+- [x] Add type checking and semantic analysis
+  - [x] Column reference resolution
+  - [x] Type compatibility in expressions
+  - [x] Table existence verification
+- [x] Implement WHERE clause predicate analysis
+- [x] Add logical plan visualization for debugging
+- [x] Create tests for logical planning
 
 ## Phase 3: Physical Planning
 
-- [ ] Define physical operator interfaces
-- [ ] Implement basic physical operators
+- [x] Define physical operator interfaces
+- [x] Implement basic physical operators
   - [x] TableScan
-  - [ ] Filter
-  - [ ] Projection
-- [ ] Create rule-based translator from logical to physical plan
-- [ ] Implement simple cost model for plan evaluation
-- [ ] Add statistics collection for better planning
-  - [ ] Table size statistics
-  - [ ] Column cardinality estimates
-- [ ] Connect operators to storage components
+  - [x] Filter
+  - [x] Projection
+- [x] Create rule-based translator from logical to physical plan
+- [x] Implement simple cost model for plan evaluation
+- [x] Add statistics collection for better planning
+  - [x] Table size statistics
+  - [x] Column cardinality estimates
+- [x] Connect operators to storage components
   - [x] TableScan using buffer pool and page manager
   - [ ] Index scan using B+Tree indexes
-- [ ] Add physical plan visualization tools
-- [ ] Write tests for physical planning
+- [x] Add physical plan visualization tools
+- [x] Write tests for physical planning
 
 ## Phase 4: Query Execution
 
 - [x] Implement iterator-based execution model
-- [ ] Create execution context for operator state
+- [x] Create execution context for operator state
 - [x] Build execution engine to run physical plans
 - [x] Implement result materialization
   - [x] Row representation
@@ -89,7 +89,7 @@ src/query/
   - [ ] Rows processed
   - [ ] Buffer pool interactions
 - [x] Create utilities for result formatting
-- [ ] Implement comprehensive execution tests
+- [x] Implement comprehensive execution tests
 
 ## Phase 5: Advanced Features
 
@@ -118,6 +118,6 @@ src/query/
 3. [x] Create basic AST node interfaces
 4. [x] Implement lexer for simple SELECT queries
 5. [x] Build parser for basic SELECT-FROM-WHERE queries
-6. [ ] Implement logical plan representation and builder
-7. [ ] Implement filter operator and expressions
-8. [ ] Add query optimization and plan selection 
+6. [x] Implement logical plan representation and builder
+7. [x] Implement filter operator and expressions
+8. [x] Add query optimization and plan selection 

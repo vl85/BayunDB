@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::cmp::Ordering;
 
 /// Possible data types for values in a row
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +24,34 @@ impl fmt::Display for DataValue {
             DataValue::Float(fl) => write!(f, "{}", fl),
             DataValue::Text(s) => write!(f, "\"{}\"", s),
             DataValue::Boolean(b) => write!(f, "{}", b),
+        }
+    }
+}
+
+impl PartialOrd for DataValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            // Null is incomparable with anything
+            (DataValue::Null, _) | (_, DataValue::Null) => None,
+            
+            // Compare integers
+            (DataValue::Integer(a), DataValue::Integer(b)) => a.partial_cmp(b),
+            
+            // Compare floats
+            (DataValue::Float(a), DataValue::Float(b)) => a.partial_cmp(b),
+            
+            // Integer and float can be compared
+            (DataValue::Integer(a), DataValue::Float(b)) => (*a as f64).partial_cmp(b),
+            (DataValue::Float(a), DataValue::Integer(b)) => a.partial_cmp(&(*b as f64)),
+            
+            // Compare strings
+            (DataValue::Text(a), DataValue::Text(b)) => a.partial_cmp(b),
+            
+            // Compare booleans
+            (DataValue::Boolean(a), DataValue::Boolean(b)) => a.partial_cmp(b),
+            
+            // Different types are incomparable (except int/float)
+            _ => None,
         }
     }
 }

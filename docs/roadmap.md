@@ -2,12 +2,22 @@
 
 This document outlines the planned next steps for BayunDB development.
 
+## Completed
+
+1. **Query Planning and Execution Implementation** ✅
+   - SQL parser and abstract syntax tree
+   - Logical query planning
+   - Physical query planning
+   - Basic execution operators (Scan, Filter, Project)
+   - Basic predicate evaluation
+
 ## Immediate Next Steps
 
-1. **Query Parser/Executor Implementation** - [Detailed TODO List](query_implementation.md)
-   - Create SQL parser and abstract syntax tree
-   - Implement execution plan generation
-   - Build query optimization framework
+1. **Query Execution Enhancements**
+   - Implement join operators (Hash Join, Nested Loop Join)
+   - Add aggregation operators (GROUP BY, COUNT, SUM, AVG)
+   - Support sorting and ORDER BY
+   - Implement query optimization rules with cost-based decisions
 
 2. **ACID Transaction Support**
    - Implement transaction manager
@@ -18,16 +28,17 @@ This document outlines the planned next steps for BayunDB development.
    - Implement range scans
    - Add deletion support
    - Optimize for bulk operations
+   - Support index scan execution operators
 
-4. **Server Connection Handling**
+4. **Query Catalog Integration**
+   - Connect query planner with system catalog
+   - Add table statistics for optimization
+   - Implement schema-aware planning
+
+5. **Server Connection Handling**
    - Create network connection handler
    - Implement client protocol
    - Add connection pooling
-
-5. **Benchmarking Pipeline**
-   - Set up continuous benchmarking
-   - Create performance dashboards
-   - Track performance over time
 
 ## Medium-Term Goals
 
@@ -48,13 +59,18 @@ This document outlines the planned next steps for BayunDB development.
 
 ## Long-Term Goals
 
-9. **SQL Functionality**
-   - Support core SQL operations (SELECT, INSERT, UPDATE, DELETE)
-   - Add JOIN support
-   - Implement aggregation functions
-   - Add indexing hints
+9. **Advanced SQL Functionality**
+   - Support complex joins (outer joins, semi-joins)
+   - Implement window functions
+   - Add subquery support
+   - Advanced indexing and hints
 
-10. **Documentation and Examples**
+10. **Distributed Query Processing**
+    - Implement distributed execution plans
+    - Add partition support
+    - Support distributed transactions
+
+11. **Documentation and Examples**
     - Create comprehensive developer documentation
     - Build example applications
     - Add interactive tutorial 
