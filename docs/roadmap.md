@@ -4,7 +4,7 @@ This document outlines the planned next steps for BayunDB development.
 
 ## Immediate Next Steps
 
-1. **Query Parser/Executor Implementation**
+1. **Query Parser/Executor Implementation** - [Detailed TODO List](query_implementation.md)
    - Create SQL parser and abstract syntax tree
    - Implement execution plan generation
    - Build query optimization framework
