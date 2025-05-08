@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use crate::query::parser::ast::{Expression, SelectStatement};
+use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference};
 
 /// Represents a node in the logical query plan
 #[derive(Debug, Clone)]
@@ -52,12 +52,171 @@ impl fmt::Display for LogicalPlan {
     }
 }
 
-/// Placeholder implementation of logical plan builder
-/// To be implemented later
-pub fn build_logical_plan(_stmt: &SelectStatement) -> LogicalPlan {
-    // Placeholder implementation - will be expanded later
-    LogicalPlan::Scan {
-        table_name: "placeholder".to_string(),
-        alias: None,
+/// Extract column names from SelectColumn variants
+fn extract_column_names(columns: &[SelectColumn]) -> Vec<String> {
+    let mut result = Vec::new();
+    
+    for col in columns {
+        match col {
+            SelectColumn::Wildcard => {
+                // Wildcard is handled differently - we'll need schema information
+                // from the catalog later. For now, use a placeholder.
+                result.push("*".to_string());
+            }
+            SelectColumn::Column(col_ref) => {
+                result.push(col_ref.name.clone());
+            }
+            SelectColumn::Expression { expr: _, alias } => {
+                if let Some(alias_name) = alias {
+                    result.push(alias_name.clone());
+                } else {
+                    // For an expression without an alias, we'd ideally generate a name
+                    // For now, use a placeholder
+                    result.push("expr".to_string());
+                }
+            }
+        }
+    }
+    
+    result
+}
+
+/// Build a logical plan from a SELECT statement
+pub fn build_logical_plan(stmt: &SelectStatement) -> LogicalPlan {
+    // Start with the FROM clause - this forms the base of our plan
+    if stmt.from.is_empty() {
+        // Handle case with no FROM clause (rare in SQL)
+        return LogicalPlan::Projection {
+            columns: extract_column_names(&stmt.columns),
+            input: Box::new(LogicalPlan::Scan {
+                table_name: "dual".to_string(), // Use a dummy table
+                alias: None,
+            }),
+        };
+    }
+    
+    // Start with the first (or only) table in the FROM clause
+    let base_table = &stmt.from[0];
+    let mut plan = LogicalPlan::Scan {
+        table_name: base_table.name.clone(),
+        alias: base_table.alias.clone(),
+    };
+    
+    // If there's a WHERE clause, add a Filter node
+    if let Some(where_expr) = &stmt.where_clause {
+        plan = LogicalPlan::Filter {
+            predicate: (**where_expr).clone(),
+            input: Box::new(plan),
+        };
+    }
+    
+    // Finally, add a Projection for the SELECT clause
+    LogicalPlan::Projection {
+        columns: extract_column_names(&stmt.columns),
+        input: Box::new(plan),
+    }
+}
+
+/// Check if a column reference belongs to a specific table
+pub fn column_belongs_to_table(col: &ColumnReference, table_name: &str, alias: &Option<String>) -> bool {
+    if let Some(table) = &col.table {
+        // If column has explicit table name, check if it matches
+        if let Some(a) = alias {
+            // Check against alias if present
+            table == a
+        } else {
+            // Check against actual table name
+            table == table_name
+        }
+    } else {
+        // If no table qualification, assume it belongs to this table
+        // This is simplified - in a real system with joins, we'd check the schema
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::parser::ast::{TableReference, Value, Operator};
+    
+    #[test]
+    fn test_simple_logical_plan() {
+        // Create a simple SELECT statement
+        let stmt = SelectStatement {
+            columns: vec![
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "id".to_string(),
+                }),
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "name".to_string(),
+                }),
+            ],
+            from: vec![TableReference {
+                name: "users".to_string(),
+                alias: None,
+            }],
+            where_clause: None,
+        };
+        
+        // Build logical plan
+        let plan = build_logical_plan(&stmt);
+        
+        // Verify the structure
+        if let LogicalPlan::Projection { columns, input } = plan {
+            assert_eq!(columns, vec!["id".to_string(), "name".to_string()]);
+            
+            if let LogicalPlan::Scan { table_name, alias } = *input {
+                assert_eq!(table_name, "users");
+                assert!(alias.is_none());
+            } else {
+                panic!("Expected Scan operation under Projection");
+            }
+        } else {
+            panic!("Expected Projection as root operation");
+        }
+    }
+    
+    #[test]
+    fn test_logical_plan_with_filter() {
+        // Create a SELECT statement with a WHERE clause
+        let stmt = SelectStatement {
+            columns: vec![SelectColumn::Wildcard],
+            from: vec![TableReference {
+                name: "products".to_string(),
+                alias: None,
+            }],
+            where_clause: Some(Box::new(Expression::BinaryOp {
+                left: Box::new(Expression::Column(ColumnReference {
+                    table: None,
+                    name: "price".to_string(),
+                })),
+                op: Operator::GreaterThan,
+                right: Box::new(Expression::Literal(Value::Integer(100))),
+            })),
+        };
+        
+        // Build logical plan
+        let plan = build_logical_plan(&stmt);
+        
+        // Verify the structure
+        if let LogicalPlan::Projection { columns, input } = plan {
+            assert_eq!(columns, vec!["*".to_string()]);
+            
+            if let LogicalPlan::Filter { input, .. } = *input {
+                if let LogicalPlan::Scan { table_name, alias } = *input {
+                    assert_eq!(table_name, "products");
+                    assert!(alias.is_none());
+                } else {
+                    panic!("Expected Scan operation under Filter");
+                }
+            } else {
+                panic!("Expected Filter operation under Projection");
+            }
+        } else {
+            panic!("Expected Projection as root operation");
+        }
     }
 } 

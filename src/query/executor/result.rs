@@ -92,6 +92,8 @@ pub enum QueryError {
     ExecutionError(String),
     /// Error in data type conversion
     TypeError(String),
+    /// Error during query planning phase
+    PlanningError(String),
     /// Table not found
     TableNotFound(String),
     /// Column not found
@@ -106,6 +108,7 @@ impl fmt::Display for QueryError {
             QueryError::StorageError(msg) => write!(f, "Storage error: {}", msg),
             QueryError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
             QueryError::TypeError(msg) => write!(f, "Type error: {}", msg),
+            QueryError::PlanningError(msg) => write!(f, "Planning error: {}", msg),
             QueryError::TableNotFound(table) => write!(f, "Table not found: {}", table),
             QueryError::ColumnNotFound(col) => write!(f, "Column not found: {}", col),
             QueryError::InvalidOperation(msg) => write!(f, "Invalid operation: {}", msg),
