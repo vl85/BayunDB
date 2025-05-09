@@ -55,6 +55,55 @@ cargo test
 cargo run
 ```
 
+## Command-Line Interface
+
+BayunDB comes with a command-line interface for interacting with the database directly.
+
+### Installation
+
+The CLI is built along with the main project:
+
+```bash
+# Build the CLI
+cargo build --bin bnql
+```
+
+### Usage
+
+```bash
+# Start an interactive shell
+./target/debug/bnql
+
+# Specify a database file
+./target/debug/bnql --db-path my_database.db
+
+# Execute a query directly
+./target/debug/bnql query "SELECT * FROM users"
+
+# Show database information
+./target/debug/bnql info
+
+# Helper scripts
+# On Unix/Linux/macOS:
+./scripts/run_cli.sh
+
+# On Windows:
+scripts\run_cli.bat
+```
+
+### Available Commands
+
+- `shell` - Start an interactive SQL shell (default if no command specified)
+- `query <sql>` - Execute a SQL query and display results
+- `create` - Create a new database
+- `info` - Display database information
+
+### CLI Options
+
+- `--db-path <path>` - Path to the database file (default: `database.db`)
+- `--log-dir <path>` - Directory for WAL log files (default: `logs`)
+- `--buffer-size <size>` - Buffer pool size in pages (default: 1000)
+
 ## Testing
 
 BayunDB includes comprehensive test suites to verify correctness and functionality:
