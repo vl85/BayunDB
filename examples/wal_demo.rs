@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         LogRecordContent::Transaction(TransactionOperationContent {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             metadata: None,
         }),
@@ -69,14 +69,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // COMMIT transaction
     println!("COMMIT transaction {}", txn_id);
-    prev_lsn = log_manager.append_log_record(
+    let _commit_lsn = log_manager.append_log_record(
         txn_id,
         prev_lsn,
         LogRecordType::Commit,
         LogRecordContent::Transaction(TransactionOperationContent {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             metadata: None,
         }),
@@ -95,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         LogRecordContent::Transaction(TransactionOperationContent {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             metadata: None,
         }),
@@ -118,14 +118,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // ABORT transaction
     println!("ABORT transaction {}", txn_id);
-    prev_lsn = log_manager.append_log_record(
+    let _abort_lsn = log_manager.append_log_record(
         txn_id,
         prev_lsn,
         LogRecordType::Abort,
         LogRecordContent::Transaction(TransactionOperationContent {
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             metadata: None,
         }),

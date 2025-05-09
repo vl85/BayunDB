@@ -120,6 +120,39 @@ pub struct LogBuffer {
     flushing: Mutex<bool>,
 }
 
+impl Clone for LogBuffer {
+    fn clone(&self) -> Self {
+        // Clone the active buffer
+        let active = self.active_buffer.read();
+        let active_clone = BufferSegment {
+            data: active.data.clone(),
+            pos: active.pos,
+            max_lsn: active.max_lsn,
+        };
+        
+        // Clone the flush buffer
+        let flush = self.flush_buffer.read();
+        let flush_clone = BufferSegment {
+            data: flush.data.clone(),
+            pos: flush.pos,
+            max_lsn: flush.max_lsn,
+        };
+        
+        // Clone the is_flushing flag
+        let is_flushing = match self.flushing.lock() {
+            Ok(guard) => *guard,
+            Err(_) => false, // Default to false if we can't get the lock
+        };
+        
+        Self {
+            active_buffer: RwLock::new(active_clone),
+            flush_buffer: RwLock::new(flush_clone),
+            config: self.config.clone(),
+            flushing: Mutex::new(is_flushing),
+        }
+    }
+}
+
 impl LogBuffer {
     /// Create a new log buffer with the given configuration
     pub fn new(config: LogBufferConfig) -> Self {
@@ -278,7 +311,6 @@ impl LogBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transaction::wal::log_record::{LogRecordType, LogRecordContent, TransactionOperationContent};
     
     fn create_test_record(lsn: u64, txn_id: u32) -> LogRecord {
         LogRecord::new_begin(lsn, txn_id)

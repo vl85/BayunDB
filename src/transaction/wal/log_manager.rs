@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
 use thiserror::Error;
 
 use crate::transaction::wal::log_buffer::{LogBuffer, LogBufferConfig, LogBufferError};
-use crate::transaction::wal::log_record::{LogRecord, LogRecordType, LogRecordError, LogRecordContent};
+use crate::transaction::wal::log_record::{LogRecord, LogRecordType, LogRecordError, LogRecordContent, DataOperationContent, TransactionOperationContent};
 
 /// Error type for log manager operations
 #[derive(Error, Debug)]
@@ -160,6 +160,41 @@ pub struct LogManager {
     
     /// Flag indicating if the log manager is flushing
     is_flushing: Mutex<bool>,
+}
+
+impl Clone for LogManager {
+    fn clone(&self) -> Self {
+        // Get the current values from the atomic fields
+        let file_position = self.file_position.load(Ordering::SeqCst);
+        let current_lsn = self.current_lsn.load(Ordering::SeqCst);
+        
+        // Clone the current log file
+        let current_log_file = match self.current_log_file.lock() {
+            Ok(file) => {
+                // We need to duplicate the file handle
+                let file_path = self.current_log_path.lock().unwrap().clone();
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&file_path)
+                    .unwrap()
+            },
+            Err(_) => panic!("Failed to lock log file for cloning"),
+        };
+        
+        // Clone the current log path
+        let current_log_path = self.current_log_path.lock().unwrap().clone();
+        
+        Self {
+            config: self.config.clone(),
+            current_log_file: Mutex::new(current_log_file),
+            current_log_path: Mutex::new(current_log_path),
+            file_position: AtomicU64::new(file_position),
+            current_lsn: AtomicU64::new(current_lsn),
+            log_buffer: self.log_buffer.clone(),
+            is_flushing: Mutex::new(*self.is_flushing.lock().unwrap()),
+        }
+    }
 }
 
 impl LogManager {
@@ -514,6 +549,428 @@ impl LogManager {
         self.flush()?;
         
         Ok(lsn)
+    }
+    
+    /// Get an iterator over log records starting from the most recent checkpoint
+    pub fn get_log_iterator_from_checkpoint(&self) -> Result<LogRecordIterator> {
+        // Find the most recent checkpoint
+        let checkpoint_lsn = self.find_last_checkpoint()?;
+        
+        // If no checkpoint found, start from beginning of log
+        let start_lsn = if checkpoint_lsn > 0 { checkpoint_lsn } else { 1 };
+        
+        self.get_log_iterator_from_lsn(start_lsn)
+    }
+    
+    /// Get an iterator over log records starting from a specific LSN
+    pub fn get_log_iterator_from_lsn(&self, start_lsn: u64) -> Result<LogRecordIterator> {
+        Ok(LogRecordIterator::new(Arc::new(self.clone()), start_lsn))
+    }
+    
+    /// Get a specific log record by LSN
+    pub fn get_log_record(&self, lsn: u64) -> Result<LogRecord> {
+        // This could be optimized to directly seek to the position, but for now
+        // we'll use the iterator to find the record
+        let mut iter = self.get_log_iterator_from_lsn(lsn)?;
+        
+        // Find the specific record
+        for record_result in &mut iter {
+            let record = record_result?;
+            if record.lsn == lsn {
+                return Ok(record);
+            }
+            if record.lsn > lsn {
+                // We've gone past the desired record
+                return Err(LogManagerError::InvalidState(
+                    format!("Log record with LSN {} not found", lsn)));
+            }
+        }
+        
+        Err(LogManagerError::InvalidState(
+            format!("Log record with LSN {} not found", lsn)))
+    }
+    
+    /// Append a compensation log record (CLR) for undo operations
+    pub fn append_compensation_record(
+        &self,
+        txn_id: u32,
+        undo_next_lsn: u64,
+        op_type: LogRecordType,
+        table_id: u32,
+        page_id: u32,
+        record_id: u32,
+        before_image: Option<Vec<u8>>,
+        after_image: Option<Vec<u8>>,
+    ) -> Result<u64> {
+        // Create appropriate content based on operation type
+        let content = match op_type {
+            LogRecordType::Update => {
+                LogRecordContent::Data(DataOperationContent {
+                    table_id,
+                    page_id,
+                    record_id,
+                    before_image,
+                    after_image,
+                })
+            },
+            LogRecordType::Insert => {
+                LogRecordContent::Data(DataOperationContent {
+                    table_id,
+                    page_id,
+                    record_id,
+                    before_image: None,
+                    after_image,
+                })
+            },
+            LogRecordType::Delete => {
+                LogRecordContent::Data(DataOperationContent {
+                    table_id,
+                    page_id,
+                    record_id,
+                    before_image,
+                    after_image: None,
+                })
+            },
+            _ => {
+                return Err(LogManagerError::InvalidState(
+                    format!("Invalid operation type for CLR: {:?}", op_type)));
+            }
+        };
+        
+        // Append the log record
+        // Note: CLRs are special because they point to the next record to undo (undo_next_lsn)
+        // rather than the previous record of the same transaction
+        self.append_log_record(txn_id, undo_next_lsn, op_type, content)
+    }
+    
+    /// Append an abort record for a transaction
+    pub fn append_abort_record(&self, txn_id: u32, prev_lsn: u64) -> Result<u64> {
+        let abort_content = LogRecordContent::Transaction(TransactionOperationContent {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            metadata: None,
+        });
+        
+        self.append_log_record(txn_id, prev_lsn, LogRecordType::Abort, abort_content)
+    }
+    
+    /// Find the most recent checkpoint LSN
+    fn find_last_checkpoint(&self) -> Result<u64> {
+        // This is a simplified implementation
+        // In a real system, we would maintain a separate checkpoint file
+        
+        // Get iterator from beginning of log
+        let mut lsn = 0;
+        let mut iter = self.get_log_iterator_from_lsn(1)?;
+        
+        // Find the last checkpoint record
+        for record_result in &mut iter {
+            let record = record_result?;
+            if record.record_type == LogRecordType::Checkpoint {
+                lsn = record.lsn;
+            }
+        }
+        
+        Ok(lsn)
+    }
+}
+
+/// Iterator over log records
+pub struct LogRecordIterator {
+    log_manager: Arc<LogManager>,
+    current_file: Option<File>,
+    current_file_path: Option<PathBuf>,
+    current_position: u64,
+    current_lsn: u64,
+    reached_end: bool,
+}
+
+impl LogRecordIterator {
+    /// Create a new log record iterator
+    fn new(log_manager: Arc<LogManager>, start_lsn: u64) -> Self {
+        Self {
+            log_manager,
+            current_file: None,
+            current_file_path: None,
+            current_position: 0,
+            current_lsn: start_lsn,
+            reached_end: false,
+        }
+    }
+    
+    /// Find the file containing the given LSN
+    fn find_file_for_lsn(&mut self, lsn: u64) -> Result<bool> {
+        // Find all log files
+        let config = &self.log_manager.config;
+        let log_files = LogManager::find_log_files(config)?;
+        
+        if log_files.is_empty() {
+            return Ok(false);
+        }
+        
+        // Sort by sequence number (ascending)
+        let mut sorted_files = log_files;
+        sorted_files.sort_by_key(|(seq, _)| *seq);
+        
+        // Find the file containing the LSN
+        let mut file_path = None;
+        let mut file_header = None;
+        
+        for (_, path) in sorted_files {
+            let mut file = OpenOptions::new()
+                .read(true)
+                .open(&path)?;
+            
+            // Read header
+            let header = LogFileHeader::read_from(&mut file)?;
+            
+            // Check if this file contains the LSN
+            if header.first_lsn <= lsn {
+                file_path = Some(path);
+                file_header = Some(header);
+                self.current_file = Some(file);
+                break;
+            }
+        }
+        
+        if let (Some(path), Some(header)) = (file_path, file_header) {
+            self.current_file_path = Some(path);
+            
+            // Position at the start of records section
+            self.current_position = LogFileHeader::HEADER_SIZE as u64;
+            
+            // If this is the first call, we need to find the right position for our start_lsn
+            if lsn > header.first_lsn && self.current_position == LogFileHeader::HEADER_SIZE as u64 {
+                // Scan forward to find the record with the desired LSN
+                self.seek_to_lsn(lsn)?;
+            }
+            
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    
+    /// Seek to the position of a specific LSN
+    fn seek_to_lsn(&mut self, target_lsn: u64) -> Result<()> {
+        if let Some(file) = &mut self.current_file {
+            // Start from the beginning of records section
+            let mut position = LogFileHeader::HEADER_SIZE as u64;
+            file.seek(SeekFrom::Start(position))?;
+            
+            // Read records until we find one with LSN >= target_lsn
+            loop {
+                // Remember position before reading
+                let record_position = position;
+                
+                // Read record size
+                let mut size_bytes = [0; 4];
+                if file.read_exact(&mut size_bytes).is_err() {
+                    // End of file
+                    break;
+                }
+                let record_size = u32::from_le_bytes(size_bytes);
+                
+                // Read record data
+                let mut record_data = vec![0; record_size as usize];
+                if file.read_exact(&mut record_data).is_err() {
+                    // End of file or corrupted record
+                    break;
+                }
+                
+                // Deserialize to check LSN
+                match LogRecord::deserialize(&record_data) {
+                    Ok(record) => {
+                        if record.lsn >= target_lsn {
+                            // Found it, position file pointer back to start of this record
+                            file.seek(SeekFrom::Start(record_position))?;
+                            self.current_position = record_position;
+                            return Ok(());
+                        }
+                    },
+                    Err(_) => {
+                        // Corrupted record, just continue
+                    }
+                }
+                
+                // Move to next record
+                position += 4 + record_size as u64;
+                file.seek(SeekFrom::Start(position))?;
+            }
+            
+            // If we didn't find it, position at the end of file
+            self.current_position = file.seek(SeekFrom::End(0))?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Move to the next log file
+    fn move_to_next_file(&mut self) -> Result<bool> {
+        if let Some(current_path) = &self.current_file_path {
+            // Extract sequence number from current file
+            let config = &self.log_manager.config;
+            let current_seq = LogManager::extract_sequence_from_path(config, current_path)?;
+            
+            // Look for the next file in sequence
+            let next_seq = current_seq + 1;
+            let next_path = LogManager::generate_log_file_path(config, next_seq);
+            
+            if next_path.exists() {
+                // Open the next file
+                let file = OpenOptions::new()
+                    .read(true)
+                    .open(&next_path)?;
+                
+                self.current_file = Some(file);
+                self.current_file_path = Some(next_path);
+                self.current_position = LogFileHeader::HEADER_SIZE as u64;
+                
+                return Ok(true);
+            }
+        }
+        
+        Ok(false)
+    }
+}
+
+impl Iterator for LogRecordIterator {
+    type Item = Result<LogRecord>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.reached_end {
+            return None;
+        }
+        
+        // If we don't have a file open yet, find the right one
+        if self.current_file.is_none() {
+            match self.find_file_for_lsn(self.current_lsn) {
+                Ok(found) => {
+                    if !found {
+                        self.reached_end = true;
+                        return None;
+                    }
+                },
+                Err(err) => {
+                    self.reached_end = true;
+                    return Some(Err(err));
+                }
+            }
+        }
+        
+        // Read the next record
+        if let Some(file) = &mut self.current_file {
+            // Seek to current position
+            if let Err(err) = file.seek(SeekFrom::Start(self.current_position)) {
+                self.reached_end = true;
+                return Some(Err(LogManagerError::IoError(err)));
+            }
+            
+            // Read record size
+            let mut size_bytes = [0; 4];
+            match file.read_exact(&mut size_bytes) {
+                Ok(_) => {
+                    let record_size = u32::from_le_bytes(size_bytes);
+                    
+                    // Read record data
+                    let mut record_data = vec![0; record_size as usize];
+                    match file.read_exact(&mut record_data) {
+                        Ok(_) => {
+                            // Update position for next read
+                            self.current_position += 4 + record_size as u64;
+                            
+                            // Return deserialized record
+                            match LogRecord::deserialize(&record_data) {
+                                Ok(record) => {
+                                    return Some(Ok(record));
+                                },
+                                Err(err) => {
+                                    self.reached_end = true;
+                                    return Some(Err(LogManagerError::LogRecordError(err)));
+                                }
+                            }
+                        },
+                        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                            // End of file, try next file
+                            match self.move_to_next_file() {
+                                Ok(found_next) => {
+                                    if !found_next {
+                                        self.reached_end = true;
+                                        return None;
+                                    }
+                                    // Continue with the next file
+                                    return self.next();
+                                },
+                                Err(err) => {
+                                    self.reached_end = true;
+                                    return Some(Err(err));
+                                }
+                            }
+                        },
+                        Err(err) => {
+                            self.reached_end = true;
+                            return Some(Err(LogManagerError::IoError(err)));
+                        }
+                    }
+                },
+                Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    // End of file, try next file
+                    match self.move_to_next_file() {
+                        Ok(found_next) => {
+                            if !found_next {
+                                self.reached_end = true;
+                                return None;
+                            }
+                            // Continue with the next file
+                            return self.next();
+                        },
+                        Err(err) => {
+                            self.reached_end = true;
+                            return Some(Err(err));
+                        }
+                    }
+                },
+                Err(err) => {
+                    self.reached_end = true;
+                    return Some(Err(LogManagerError::IoError(err)));
+                }
+            }
+        }
+        
+        self.reached_end = true;
+        None
+    }
+}
+
+// Helper method to extract sequence number from log file path
+impl LogManager {
+    fn extract_sequence_from_path(config: &LogManagerConfig, path: &Path) -> Result<u32> {
+        // Example: extract "001" from "bayundb_log_001.log"
+        let file_name = path.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| LogManagerError::InvalidState("Invalid log file path".to_string()))?;
+        
+        let base_name = &config.log_file_base_name;
+        
+        // Check if the file name starts with the base name
+        if !file_name.starts_with(base_name) {
+            return Err(LogManagerError::InvalidState(
+                format!("Log file {} does not match base name {}", file_name, base_name)));
+        }
+        
+        // Extract the sequence number part
+        let seq_part = file_name
+            .strip_prefix(&format!("{}_", base_name))
+            .and_then(|s| s.strip_suffix(".log"))
+            .ok_or_else(|| LogManagerError::InvalidState(
+                format!("Invalid log file name format: {}", file_name)))?;
+        
+        // Parse the sequence number
+        seq_part.parse::<u32>()
+            .map_err(|_| LogManagerError::InvalidState(
+                format!("Invalid sequence number in log file: {}", file_name)))
     }
 }
 

@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::query::executor::operators::Operator;
 use crate::query::executor::result::{Row, QueryResult, QueryError, DataValue};
-use crate::query::parser::ast::{Expression, Value, Operator as AstOperator};
 
 /// Filter operator that filters rows based on a predicate
 pub struct FilterOperator {

@@ -44,6 +44,7 @@ dependencies = [
  "byteorder",
  "criterion",
  "crossbeam",
+ "log",
  "parking_lot",
  "rand",
  "serde",

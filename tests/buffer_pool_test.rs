@@ -1,12 +1,7 @@
-use std::sync::Arc;
-use tempfile::NamedTempFile;
 use anyhow::Result;
 
-use bayundb::storage::buffer::BufferPoolManager;
-use bayundb::common::types::PageId;
-
 mod common;
-use common::{create_test_buffer_pool, generate_test_data};
+use common::create_test_buffer_pool;
 
 #[test]
 fn test_new_page() -> Result<()> {

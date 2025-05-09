@@ -1,13 +1,10 @@
-use std::sync::Arc;
 use anyhow::Result;
 
-use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::storage::page::PageManager;
 use bayundb::index::btree::BTreeIndex;
-use bayundb::common::types::Rid;
 
 mod common;
-use common::{create_test_buffer_pool, generate_test_data};
+use common::create_test_buffer_pool;
 
 #[test]
 fn test_database_end_to_end() -> Result<()> {

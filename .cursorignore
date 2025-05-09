@@ -1,0 +1,36 @@
+# Rust build outputs
+/target/
+
+# Generated files
+*.db
+*.lock
+/memory
+/logs/
+
+# Editor specific files
+.vs/
+.idea/
+*.swp
+*.swo
+
+# Temporary or backup files
+*~
+*.bak
+*.tmp
+
+# Binary files
+*.o
+*.a
+*.so
+*.exe
+*.pdb
+*.obj
+
+# Large data files
+*.dat
+*.bin
+
+# Git related
+.git/ 
+
+/docs/benchmarks/

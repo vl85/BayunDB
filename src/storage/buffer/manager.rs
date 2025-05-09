@@ -4,7 +4,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use anyhow::Result;
 
-use crate::common::types::{Page, PageId, PagePtr, Frame, FrameId, FramePtr, Lsn, TxnId};
+use crate::common::types::{Page, PageId, PagePtr, Frame, FrameId, FramePtr, Lsn};
 use crate::storage::disk::DiskManager;
 use crate::storage::buffer::error::BufferPoolError;
 use crate::storage::buffer::replacer::LRUReplacer;

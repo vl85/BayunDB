@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::query::executor::operators::{Operator, create_table_scan, create_filter, create_projection, 
     create_nested_loop_join, create_hash_join};
-use crate::query::executor::result::{QueryResult, QueryError};
+use crate::query::executor::result::QueryResult;
 use crate::query::parser::ast::{Expression, JoinType};
 use crate::query::planner::logical::LogicalPlan;
 

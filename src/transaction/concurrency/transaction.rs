@@ -1,8 +1,8 @@
 // BayunDB Transaction implementation
 // Represents an active database transaction
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 use crate::common::types::{TxnId, Lsn};

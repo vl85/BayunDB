@@ -4,18 +4,26 @@
 
 use std::sync::Arc;
 
-use crate::query::executor::result::{QueryResult, QueryResultSet, QueryError};
-use crate::query::parser::ast::{Statement, SelectStatement, SelectColumn, ColumnReference, TableReference};
-use crate::query::planner::{Planner, physical, logical::LogicalPlan};
 use crate::storage::buffer::BufferPoolManager;
+use crate::storage::page::PageManager;
+use crate::query::executor::result::{QueryResult, QueryError, QueryResultSet};
+use crate::query::parser::ast::{Statement, SelectStatement};
+use crate::query::planner::{Planner, physical};
+
+#[cfg(test)]
+use crate::query::parser::ast::{SelectColumn, ColumnReference, TableReference};
 
 /// The ExecutionEngine is responsible for executing parsed SQL queries
 /// and producing result sets.
 pub struct ExecutionEngine {
     /// Buffer pool manager for storage access
     buffer_pool: Arc<BufferPoolManager>,
+    
     /// Query planner
     planner: Planner,
+    
+    /// Page manager for record handling
+    page_manager: PageManager,
 }
 
 impl ExecutionEngine {
@@ -24,6 +32,7 @@ impl ExecutionEngine {
         ExecutionEngine {
             buffer_pool,
             planner: Planner::new(),
+            page_manager: PageManager::new(),
         }
     }
     

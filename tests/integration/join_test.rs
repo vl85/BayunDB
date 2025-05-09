@@ -4,7 +4,7 @@ use bayundb::query::parser::ast::{Statement, JoinType};
 use bayundb::query::planner::logical::{self, LogicalPlan};
 use bayundb::query::planner::physical::{self, PhysicalPlan};
 use bayundb::query::executor::result::DataValue;
-use bayundb::query::executor::operators::{create_table_scan, create_filter};
+use bayundb::query::executor::operators::create_table_scan;
 use bayundb::query::executor::operators::join::create_hash_join;
 
 #[test]

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use bayundb::common::types::{TxnId, Rid, Page};
+use bayundb::common::types::{Rid, Page};
 use bayundb::storage::buffer::manager::BufferPoolManager;
 use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
 use bayundb::transaction::wal::log_buffer::LogBufferConfig;

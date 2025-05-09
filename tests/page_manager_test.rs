@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use bayundb::storage::page::PageManager;
 use bayundb::common::types::Page;
 use anyhow::Result;

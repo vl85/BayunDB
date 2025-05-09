@@ -1,8 +1,11 @@
-// Export public modules
+#![allow(unused_variables)]
+
+// Bayun Database Engine
+
 pub mod common;
-pub mod storage;
 pub mod index;
 pub mod query;
+pub mod storage;
 pub mod transaction;
 
 // Re-export key items for convenient access

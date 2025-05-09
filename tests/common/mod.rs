@@ -2,8 +2,7 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::storage::page::PageManager;
-use bayundb::query::parser::ast::DataType;
-use bayundb::query::executor::result::{DataValue, Row, QueryResult};
+use bayundb::query::executor::result::{DataValue, Row};
 use anyhow::Result;
 
 // Create a temporary database file for testing
