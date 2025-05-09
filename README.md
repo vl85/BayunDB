@@ -15,20 +15,32 @@ src/
 │   ├── disk/       # Disk I/O operations
 ├── index/          # Index structures
 │   ├── btree/      # B+Tree implementation
-├── catalog/        # (Future) Schema management
-├── transaction/    # (Future) Transaction management
-├── query/          # (Future) Query processing
+├── catalog/        # Schema management
+├── transaction/    # Transaction management
+├── query/          # Query processing
 ```
 
-## Development Roadmap
+## Documentation
 
-The development roadmap for BayunDB can be found in [docs/roadmap.md](docs/roadmap.md), which outlines immediate next steps and longer-term goals for the project.
+Comprehensive documentation is available in the `docs/` directory, organized by component:
+
+- **[Overview and Organization](docs/README.md)**: Documentation structure and main topics
+- **Component Documentation**:
+  - [Storage Engine](docs/components/storage/): Page management, buffer pool, disk I/O
+  - [Index Structures](docs/components/index/): B+Tree implementation details
+  - [Transaction Management](docs/components/transaction/): WAL, recovery, concurrency
+  - [Query Processing](docs/components/query/): Parser, planner, execution
+- **Project Information**:
+  - [Development Roadmap](docs/project/roadmap.md): Completed features and future plans
+  - [Documentation Guide](docs/project/documentation_guide.md): Documentation standards and practices
+  - [Design Decisions](docs/project/): Key architectural choices and rationales
 
 ## Key Components
 
 - **Page Manager**: Manages the internal layout of database pages, including record insertion, deletion, and compaction.
 - **Buffer Pool Manager**: Handles caching of database pages in memory, with LRU replacement policy.
 - **B+Tree Index**: Provides efficient key-based lookups and range scans.
+- **Write-Ahead Log (WAL)**: Ensures durability of transactions through logging.
 
 ## Building and Running
 
@@ -138,29 +150,31 @@ cargo test test_database_end_to_end
 
 ## Benchmarks
 
-BayunDB includes performance benchmarks using Criterion.rs to measure and track component performance.
+BayunDB includes performance benchmarks using Criterion.rs to measure and track component performance across key subsystems.
 
-### Buffer Pool Manager Benchmarks
+### Benchmark Types
 
-The buffer pool benchmarks measure page access patterns and analyze the effectiveness of the LRU caching strategy:
+The benchmarks are implemented in the `benches/` directory:
 
-- **Sequential Access**: Tests accessing pages in sequential order with different buffer pool sizes (10, 100, 1000 pages)
-- **Random Access**: Tests random page access patterns with different buffer pool sizes
+```
+benches/
+├── buffer_pool_bench.rs    # Buffer pool access pattern benchmarks
+├── btree_bench.rs          # B+Tree operation benchmarks
+├── transaction_bench.rs    # Transaction operation benchmarks
+└── recovery_bench.rs       # WAL and recovery performance benchmarks
+```
 
-### B+Tree Index Benchmarks
+Each benchmark measures different aspects of the system:
 
-Tests B+Tree operations including insertion, lookup, and range scans.
+- **Buffer Pool**: Tests the effectiveness of the LRU caching strategy with sequential and random access patterns using various buffer pool sizes (10, 100, 1000 pages)
+- **B+Tree Index**: Measures performance of key operations (insertion, lookup, range scans) with different data distributions
+- **Transaction and Recovery**:
+  - WAL throughput with different operation counts and sync settings
+  - Recovery time with varying workload sizes
+  - Checkpoint overhead with different log sizes
+  - Recovery performance with varying checkpoint frequencies
 
-### Transaction and Recovery Benchmarks
-
-The recovery benchmarks measure the performance of the WAL (Write-Ahead Log) system and recovery process:
-
-- **WAL Append Performance**: Measures the throughput of transaction logging with different operation counts and sync settings
-- **Recovery Time**: Evaluates the time needed to recover after a crash with different workload sizes
-- **Checkpoint Performance**: Tests the overhead of creating checkpoints with varying log sizes
-- **Recovery with Checkpoints**: Measures recovery performance with different checkpoint frequencies
-
-Run the benchmarks:
+### Running Benchmarks
 
 ```bash
 # Run all benchmarks
@@ -174,43 +188,21 @@ cargo bench --bench recovery_bench
 cargo bench -- --output-format=bencher
 ```
 
-Benchmark results show performance characteristics under different access patterns and recovery scenarios:
-
-- WAL performance varies significantly based on whether synchronous flushing is enabled
-- Recovery time improves with checkpoint frequency but with diminishing returns
-- Transaction throughput is affected by the logging and checkpoint frequency
-
-### Benchmark Implementation Details
-
-The benchmarks are implemented in the `benches/` directory:
-
-```
-benches/
-├── buffer_pool_bench.rs    # Buffer pool access pattern benchmarks
-├── btree_bench.rs          # B+Tree operation benchmarks
-├── transaction_bench.rs    # Transaction operation benchmarks
-└── recovery_bench.rs       # WAL and recovery performance benchmarks
-```
-
-Each benchmark:
-1. Initializes a test environment with a temporary database
-2. Creates and populates pages with test data
-3. Measures performance of repeated operations
-4. Reports statistics on operation latency
-
 ### Analyzing Results
 
-Criterion generates HTML reports in `target/criterion/` with:
-- Detailed statistical analysis
-- Performance comparisons between runs
-- Visualization of performance distributions
+Criterion generates HTML reports in `target/criterion/` that include detailed statistical analysis and performance comparisons. Key metrics to look for:
 
-Look for:
 - **Mean execution time**: The average time per operation
 - **Throughput**: Operations per second
 - **Consistency**: Standard deviation and outliers
 
-### Adding Custom Benchmarks
+Performance characteristics vary across components:
+- Buffer pool performance depends on access patterns and cache size
+- WAL performance is significantly affected by synchronous flushing settings
+- Recovery time improves with checkpoint frequency (with diminishing returns)
+- Transaction throughput varies based on logging and checkpoint frequency
+
+### Creating Custom Benchmarks
 
 To add your own benchmarks:
 
@@ -223,11 +215,6 @@ To add your own benchmarks:
    ```
 3. Implement your benchmark using the Criterion framework
 4. Run with `cargo bench --bench my_new_benchmark`
-
-For realistic database workloads, consider implementing:
-- B+Tree index performance benchmarks
-- Insert/update/delete operation benchmarks
-- Full-scan vs. indexed scan comparisons
 
 ## License
 

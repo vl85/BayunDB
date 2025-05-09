@@ -1,0 +1,112 @@
+# BayunDB Development Roadmap
+
+This document outlines the planned development steps for BayunDB, organized by completion status and priority.
+
+## Completed Features
+
+1. **Query Planning and Execution**
+   - SQL parser and abstract syntax tree
+   - Logical query planning
+   - Physical query planning
+   - Basic execution operators (Scan, Filter, Project)
+   - Basic predicate evaluation
+   - Parser support for JOIN operations (INNER, LEFT)
+   - Integration tests for JOIN queries
+   - Join execution operators (Hash Join, Nested Loop Join)
+
+2. **Performance Benchmarking**
+   - Buffer pool performance benchmarks
+   - B+Tree index benchmarks
+   - Query parser benchmarks with JSON output format
+   - Automated benchmark report generation
+   - WAL and recovery performance benchmarks
+
+3. **Transaction Management (Partial)**
+   - WAL (Write-Ahead Log) implementation
+   - Transaction manager
+   - Basic recovery implementation
+
+## Current Development Focus
+
+1. **Query Execution Enhancements**
+   - Add aggregation operators (GROUP BY, COUNT, SUM, etc.)
+   - Add ORDER BY implementation
+   - Add LIMIT/OFFSET support
+   - Add subquery support
+
+2. **ACID Transaction Support Completion**
+   - Full ARIES-style recovery with transaction rollback
+   - Isolation level support (READ COMMITTED, REPEATABLE READ, SERIALIZABLE)
+   - Deadlock detection and prevention
+
+3. **B+Tree Index Enhancements**
+   - Support for concurrency in B+Tree operations
+   - Support for compound keys
+   - Index scan operators in query execution
+   - Index usage in query planning
+
+4. **Comprehensive Error Handling**
+   - Improve error reporting and recovery
+   - Add debugging tools
+   - Implement more robust exception handling
+
+5. **Schema and Catalog Management**
+   - Build metadata storage system
+   - Implement schema versioning
+   - Add constraint management
+
+## Medium-term Goals
+
+1. **Server Connection Handling**
+   - Network protocol implementation
+   - Client connection management
+   - Authentication and authorization
+   - Client/server architecture
+   - Connection pooling
+
+2. **Advanced SQL Functionality**
+   - Support complex joins (outer joins, semi-joins)
+   - Implement window functions
+   - Prepared statements
+   - Views
+   - Foreign key constraints
+   - Triggers
+   - Stored procedures
+
+3. **Enhanced Testing Framework**
+   - Replace string-based predicate representation with proper AST evaluation
+   - Create a mock data generator for testing with realistic datasets
+   - Support for predefined test tables with known contents
+   - Framework for verifying query results match expected outputs
+   - Golden test files for query result verification
+
+## Long-term Vision
+
+1. **Distributed Database Support**
+   - Distributed query execution
+   - Data partitioning
+   - Replication
+   - Consensus protocol implementation
+   - Distributed transactions
+
+2. **Performance Optimization**
+   - Cost-based optimizer
+   - Statistics collection and utilization
+   - Query caching
+   - Just-in-time compilation of queries
+   - Advanced indexing techniques
+
+## Contributing
+
+If you're interested in working on any of these features, please check our [Contributing Guide](../contributing/contributing.md) and [Development Workflow](../development/workflow.md) documents. We prioritize tasks in our issue tracker and welcome contributions that align with our roadmap.
+
+## Timeline and Milestones
+
+| Milestone | Target Date | Key Features |
+|-----------|-------------|--------------|
+| v0.1.0    | Completed   | Basic storage engine, B+Tree indexes |
+| v0.2.0    | Completed   | SQL parser, query planning and execution |
+| v0.3.0    | In Progress | ACID transactions, advanced indexing |
+| v0.4.0    | Q3 2023     | Server connection handling, client protocol |
+| v0.5.0    | Q4 2023     | Advanced SQL features, improved error handling |
+| v1.0.0    | Q2 2024     | Production-ready release with comprehensive documentation | 
