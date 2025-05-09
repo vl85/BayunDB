@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference};
+use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType};
 
 /// Represents a node in the logical query plan
 #[derive(Debug, Clone)]
@@ -30,6 +30,17 @@ pub enum LogicalPlan {
         /// Input plan
         input: Box<LogicalPlan>,
     },
+    /// Join two relations
+    Join {
+        /// Left input plan
+        left: Box<LogicalPlan>,
+        /// Right input plan
+        right: Box<LogicalPlan>,
+        /// Join condition
+        condition: Expression,
+        /// Join type
+        join_type: JoinType,
+    },
 }
 
 impl fmt::Display for LogicalPlan {
@@ -47,6 +58,10 @@ impl fmt::Display for LogicalPlan {
             }
             LogicalPlan::Projection { columns, input } => {
                 write!(f, "Projection: {}\n  {}", columns.join(", "), input)
+            }
+            LogicalPlan::Join { left, right, condition, join_type } => {
+                write!(f, "{:?} Join: {:?}\n  Left: {}\n  Right: {}", 
+                       join_type, condition, left, right)
             }
         }
     }
@@ -101,6 +116,21 @@ pub fn build_logical_plan(stmt: &SelectStatement) -> LogicalPlan {
         table_name: base_table.name.clone(),
         alias: base_table.alias.clone(),
     };
+    
+    // Process JOIN clauses if any
+    for join in &stmt.joins {
+        let right_plan = LogicalPlan::Scan {
+            table_name: join.table.name.clone(),
+            alias: join.table.alias.clone(),
+        };
+        
+        plan = LogicalPlan::Join {
+            left: Box::new(plan),
+            right: Box::new(right_plan),
+            condition: *join.condition.clone(),
+            join_type: join.join_type.clone(),
+        };
+    }
     
     // If there's a WHERE clause, add a Filter node
     if let Some(where_expr) = &stmt.where_clause {

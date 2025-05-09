@@ -33,7 +33,7 @@ fn btree_benchmark(c: &mut Criterion) {
             
             // Generate random keys to insert
             let mut rng = rand::thread_rng();
-            let keys: Vec<i32> = (0..size).map(|_| rng.r#gen::<i32>()).collect();
+            let keys: Vec<i32> = (0..size).map(|_| rng.gen::<i32>()).collect();
             let mut idx = 0;
             
             // Benchmark inserting keys
@@ -101,6 +101,41 @@ fn btree_benchmark(c: &mut Criterion) {
                 }
                 let (start, end) = ranges[idx];
                 let _ = btree.range_scan(&start, &end).unwrap();
+                idx += 1;
+            });
+        });
+        
+        // Benchmark B+Tree remove operations
+        group.bench_with_input(BenchmarkId::new("remove", size), size, |b, &size| {
+            let buffer_pool = create_test_environment(buffer_pool_size);
+            let btree = BTreeIndex::<i32>::new(buffer_pool.clone()).unwrap();
+            
+            // Insert keys first
+            let mut keys = Vec::with_capacity(size as usize);
+            for i in 0..size {
+                let key = i as i32;
+                btree.insert(key, (key as u32) + 1000).unwrap();
+                keys.push(key);
+            }
+            
+            // Shuffle keys for random removal order
+            let mut rng = rand::thread_rng();
+            keys.shuffle(&mut rng);
+            let mut idx = 0;
+            
+            // Benchmark removing keys
+            b.iter(|| {
+                if idx >= keys.len() {
+                    // If we've removed all keys, repopulate the tree
+                    if idx == keys.len() {
+                        for &key in &keys {
+                            btree.insert(key, (key as u32) + 1000).unwrap();
+                        }
+                    }
+                    idx = 0;
+                }
+                let key = keys[idx];
+                let _ = btree.remove(&key).unwrap();
                 idx += 1;
             });
         });

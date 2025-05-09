@@ -7,12 +7,9 @@
 pub mod scan;
 pub mod filter;
 pub mod project;
+pub mod join;
 
 // Placeholder modules - will be implemented later
-pub mod join {
-    // Placeholder implementation
-}
-
 pub mod agg {
     // Placeholder implementation
 }
@@ -46,4 +43,22 @@ pub fn create_filter(input: Arc<Mutex<dyn Operator>>, predicate: String) -> Quer
 
 pub fn create_projection(input: Arc<Mutex<dyn Operator>>, columns: Vec<String>) -> QueryResult<Arc<Mutex<dyn Operator>>> {
     project::create_projection(input, columns)
+}
+
+pub fn create_nested_loop_join(
+    left: Arc<Mutex<dyn Operator>>, 
+    right: Arc<Mutex<dyn Operator>>, 
+    condition: String,
+    is_left_join: bool
+) -> QueryResult<Arc<Mutex<dyn Operator>>> {
+    join::create_nested_loop_join(left, right, condition, is_left_join)
+}
+
+pub fn create_hash_join(
+    left: Arc<Mutex<dyn Operator>>, 
+    right: Arc<Mutex<dyn Operator>>, 
+    condition: String,
+    is_left_join: bool
+) -> QueryResult<Arc<Mutex<dyn Operator>>> {
+    join::create_hash_join(left, right, condition, is_left_join)
 } 

@@ -5,9 +5,10 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use crate::query::executor::operators::{Operator, create_table_scan, create_filter, create_projection};
+use crate::query::executor::operators::{Operator, create_table_scan, create_filter, create_projection, 
+    create_nested_loop_join, create_hash_join};
 use crate::query::executor::result::{QueryResult, QueryError};
-use crate::query::parser::ast::Expression;
+use crate::query::parser::ast::{Expression, JoinType};
 use crate::query::planner::logical::LogicalPlan;
 
 /// Represents a node in the physical query plan
@@ -39,6 +40,28 @@ pub enum PhysicalPlan {
         /// Input plan
         input: Box<PhysicalPlan>,
     },
+    /// Nested Loop Join operator
+    NestedLoopJoin {
+        /// Left input plan
+        left: Box<PhysicalPlan>,
+        /// Right input plan
+        right: Box<PhysicalPlan>,
+        /// Join condition
+        condition: Expression,
+        /// Join type
+        join_type: JoinType,
+    },
+    /// Hash Join operator
+    HashJoin {
+        /// Left input plan (build side)
+        left: Box<PhysicalPlan>,
+        /// Right input plan (probe side)
+        right: Box<PhysicalPlan>,
+        /// Join condition
+        condition: Expression,
+        /// Join type
+        join_type: JoinType,
+    },
 }
 
 impl fmt::Display for PhysicalPlan {
@@ -59,6 +82,14 @@ impl fmt::Display for PhysicalPlan {
             }
             PhysicalPlan::Materialize { input } => {
                 write!(f, "Materialize\n  {}", input)
+            }
+            PhysicalPlan::NestedLoopJoin { left, right, condition, join_type } => {
+                write!(f, "NestedLoopJoin ({:?}): {:?}\n  Left: {}\n  Right: {}", 
+                       join_type, condition, left, right)
+            }
+            PhysicalPlan::HashJoin { left, right, condition, join_type } => {
+                write!(f, "HashJoin ({:?}): {:?}\n  Left: {}\n  Right: {}", 
+                       join_type, condition, left, right)
             }
         }
     }
@@ -100,6 +131,35 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
                 columns: columns.clone(),
             }
         }
+        LogicalPlan::Join { left, right, condition, join_type } => {
+            // Convert both inputs to physical plans
+            let physical_left = create_physical_plan(left);
+            let physical_right = create_physical_plan(right);
+            
+            // Choose between hash join and nested loop join based on join condition
+            // For now, use hash join for equi-joins and nested loop for others
+            // In a real system, this would be based on cost estimation
+            match condition {
+                Expression::BinaryOp { op, .. } if op.is_equality() => {
+                    // Use hash join for equality conditions (more efficient)
+                    PhysicalPlan::HashJoin {
+                        left: Box::new(physical_left),
+                        right: Box::new(physical_right),
+                        condition: condition.clone(),
+                        join_type: join_type.clone(),
+                    }
+                }
+                _ => {
+                    // Use nested loop join for other conditions
+                    PhysicalPlan::NestedLoopJoin {
+                        left: Box::new(physical_left),
+                        right: Box::new(physical_right),
+                        condition: condition.clone(),
+                        join_type: join_type.clone(),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -130,6 +190,34 @@ pub fn build_operator_tree(plan: &PhysicalPlan) -> QueryResult<Arc<Mutex<dyn Ope
             // For now, we'll just pass through to the input operator
             // In a real system, you'd create a materializing operator
             build_operator_tree(input)
+        }
+        PhysicalPlan::NestedLoopJoin { left, right, condition, join_type } => {
+            // Build the left and right input operators
+            let left_op = build_operator_tree(left)?;
+            let right_op = build_operator_tree(right)?;
+            
+            // Convert the condition to a string
+            let condition_str = expression_to_predicate(condition);
+            
+            // Determine if this is a left join
+            let is_left_join = *join_type == JoinType::LeftOuter;
+            
+            // Create the nested loop join operator
+            create_nested_loop_join(left_op, right_op, condition_str, is_left_join)
+        }
+        PhysicalPlan::HashJoin { left, right, condition, join_type } => {
+            // Build the left and right input operators
+            let left_op = build_operator_tree(left)?;
+            let right_op = build_operator_tree(right)?;
+            
+            // Convert the condition to a string
+            let condition_str = expression_to_predicate(condition);
+            
+            // Determine if this is a left join
+            let is_left_join = *join_type == JoinType::LeftOuter;
+            
+            // Create the hash join operator
+            create_hash_join(left_op, right_op, condition_str, is_left_join)
         }
     }
 }
@@ -165,6 +253,24 @@ pub fn add_materialization(plan: PhysicalPlan) -> PhysicalPlan {
                 predicate,
             }
         }
+        PhysicalPlan::NestedLoopJoin { left, right, condition, join_type } => {
+            // Add materialization to both sides of the join
+            PhysicalPlan::NestedLoopJoin {
+                left: Box::new(add_materialization(*left)),
+                right: Box::new(add_materialization(*right)),
+                condition,
+                join_type,
+            }
+        }
+        PhysicalPlan::HashJoin { left, right, condition, join_type } => {
+            // Add materialization to both sides of the join
+            PhysicalPlan::HashJoin {
+                left: Box::new(add_materialization(*left)),
+                right: Box::new(add_materialization(*right)),
+                condition,
+                join_type,
+            }
+        }
         // Base case - no materialization needed
         _ => plan,
     }
@@ -193,6 +299,14 @@ impl CostModel {
             PhysicalPlan::Materialize { input } => {
                 // Materialization is expensive but can save in repeated access
                 50.0 + Self::estimate_cost(input)
+            }
+            PhysicalPlan::NestedLoopJoin { left, right, .. } => {
+                // Nested loop joins are very expensive - cost is product of inputs
+                Self::estimate_cost(left) * Self::estimate_cost(right)
+            }
+            PhysicalPlan::HashJoin { left, right, .. } => {
+                // Hash joins are cheaper than nested loop - cost is sum plus overhead
+                75.0 + Self::estimate_cost(left) + Self::estimate_cost(right)
             }
         }
     }

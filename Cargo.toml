@@ -24,8 +24,20 @@ name = "query_parser_bench"
 harness = false
 
 [[test]]
-name = "query_processing_test"
-path = "tests/integration/query_processing_test.rs"
+name = "parser_test"
+path = "tests/integration/parser_test.rs"
+
+[[test]]
+name = "planner_test"
+path = "tests/integration/planner_test.rs"
+
+[[test]]
+name = "join_test"
+path = "tests/integration/join_test.rs"
+
+[[test]]
+name = "execution_test"
+path = "tests/integration/execution_test.rs"
 
 [dependencies]
 thiserror = "1.0"

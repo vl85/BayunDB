@@ -132,6 +132,13 @@ pub enum Operator {
     Divide,
 }
 
+impl Operator {
+    /// Check if this operator is an equality operator (used for join type selection)
+    pub fn is_equality(&self) -> bool {
+        matches!(self, Operator::Equals)
+    }
+}
+
 /// CREATE TABLE statement
 #[derive(Debug, Clone)]
 pub struct CreateStatement {

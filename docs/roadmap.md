@@ -10,67 +10,124 @@ This document outlines the planned next steps for BayunDB development.
    - Physical query planning
    - Basic execution operators (Scan, Filter, Project)
    - Basic predicate evaluation
+   - Parser support for JOIN operations (INNER, LEFT) ✅
+   - Integration tests for JOIN queries ✅
+   - Join execution operators (Hash Join, Nested Loop Join) ✅
+
+2. **Performance Benchmarking** ✅
+   - Buffer pool performance benchmarks
+   - B+Tree index benchmarks
+   - Query parser benchmarks with JSON output format
+   - Automated benchmark report generation
 
 ## Immediate Next Steps
 
 1. **Query Execution Enhancements**
-   - Implement join operators (Hash Join, Nested Loop Join)
-   - Add aggregation operators (GROUP BY, COUNT, SUM, AVG)
-   - Support sorting and ORDER BY
-   - Implement query optimization rules with cost-based decisions
+   - Add aggregation operators (GROUP BY, COUNT, SUM, etc.)
+   - Add ORDER BY implementation
+   - Add LIMIT/OFFSET support
+   - Add subquery support
 
 2. **ACID Transaction Support**
-   - Implement transaction manager
-   - Add isolation level support (Read Committed, Repeatable Read, Serializable)
-   - Build concurrency control mechanism (MVCC or lock-based)
+   - WAL (Write-Ahead Log) implementation
+   - Transaction manager
+   - Isolation level support
+   - Deadlock detection and prevention
 
-3. **B+Tree Enhancements**
-   - Implement range scans
-   - Add deletion support
-   - Optimize for bulk operations
-   - Support index scan execution operators
+3. **B+Tree Index Enhancements**
+   - Support for concurrency in B+Tree operations
+   - Support for compound keys
+   - Index scan operators in query execution
+   - Index usage in query planning
 
-4. **Query Catalog Integration**
+## Medium-term Goals
+
+1. **Server Connection Handling**
+   - Network protocol implementation
+   - Client connection management
+   - Authentication and authorization
+   - Client/server architecture
+
+2. **Advanced Feature Development**
+   - Prepared statements
+   - Views
+   - Foreign key constraints
+   - Triggers
+   - Stored procedures
+
+## Long-term Goals
+
+1. **Distributed Database Support**
+   - Distributed query execution
+   - Data partitioning
+   - Replication
+   - Consensus protocol implementation
+
+2. **Performance Optimization**
+   - Cost-based optimizer
+   - Statistics collection
+   - Query caching
+   - Just-in-time compilation of queries
+
+## Completed
+
+3. **Query Catalog Integration**
    - Connect query planner with system catalog
    - Add table statistics for optimization
    - Implement schema-aware planning
 
-5. **Server Connection Handling**
+4. **Server Connection Handling**
    - Create network connection handler
    - Implement client protocol
    - Add connection pooling
 
-## Medium-Term Goals
+## Immediate Next Steps
 
-6. **Comprehensive Error Handling**
+5. **Comprehensive Error Handling**
    - Improve error reporting and recovery
    - Add debugging tools
    - Implement more robust exception handling
 
-7. **Schema and Catalog Management**
+6. **Schema and Catalog Management**
    - Build metadata storage system
    - Implement schema versioning
    - Add constraint management
 
-8. **WAL (Write-Ahead Logging)**
+7. **WAL (Write-Ahead Logging)**
    - Implement log manager
    - Add crash recovery
    - Optimize logging performance
 
-## Long-Term Goals
+## Medium-Term Goals
 
-9. **Advanced SQL Functionality**
+8. **Advanced SQL Functionality**
    - Support complex joins (outer joins, semi-joins)
    - Implement window functions
    - Add subquery support
    - Advanced indexing and hints
 
-10. **Distributed Query Processing**
-    - Implement distributed execution plans
-    - Add partition support
-    - Support distributed transactions
+9. **Distributed Query Processing**
+   - Implement distributed execution plans
+   - Add partition support
+   - Support distributed transactions
 
-11. **Documentation and Examples**
+10. **Documentation and Examples**
     - Create comprehensive developer documentation
     - Build example applications
-    - Add interactive tutorial 
+    - Add interactive tutorial
+
+## Enhanced Testing Framework
+
+- [ ] **Improved Expression Handling**
+  - Replace string-based predicate representation with proper AST evaluation
+  - Support complex expressions in filter, join conditions, etc.
+
+- [ ] **Test Data Infrastructure**
+  - Create a mock data generator for testing with realistic datasets
+  - Support for predefined test tables with known contents
+  - Mock catalog implementation for table metadata
+
+- [ ] **End-to-End Query Verification**
+  - Framework for verifying query results match expected outputs
+  - Golden test files for query result verification
+  - Performance benchmarking infrastructure 

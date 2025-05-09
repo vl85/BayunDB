@@ -4,7 +4,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Eq};
+use std::hash::{Hash, Hasher};
 
 /// Possible data types for values in a row
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +15,37 @@ pub enum DataValue {
     Float(f64),
     Text(String),
     Boolean(bool),
+}
+
+impl Eq for DataValue {}
+
+impl Hash for DataValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Add a type discriminant first to avoid collisions between different types
+        match self {
+            DataValue::Null => {
+                0.hash(state);
+            }
+            DataValue::Integer(i) => {
+                1.hash(state);
+                i.hash(state);
+            }
+            DataValue::Float(f) => {
+                2.hash(state);
+                // Handle NaN and -0.0 special cases
+                let bits = f.to_bits();
+                bits.hash(state);
+            }
+            DataValue::Text(s) => {
+                3.hash(state);
+                s.hash(state);
+            }
+            DataValue::Boolean(b) => {
+                4.hash(state);
+                b.hash(state);
+            }
+        }
+    }
 }
 
 impl fmt::Display for DataValue {
@@ -64,6 +96,27 @@ pub struct Row {
     /// Column order for consistent display
     column_order: Vec<String>,
 }
+
+impl PartialEq for Row {
+    fn eq(&self, other: &Self) -> bool {
+        // Two rows are equal if they have the same columns and values
+        if self.column_order.len() != other.column_order.len() {
+            return false;
+        }
+
+        // Check all values in this row exist in the other row
+        for col in &self.column_order {
+            match (self.values.get(col), other.values.get(col)) {
+                (Some(v1), Some(v2)) if v1 == v2 => {}
+                _ => return false,
+            }
+        }
+        
+        true
+    }
+}
+
+impl Eq for Row {}
 
 impl Row {
     /// Create a new empty row
