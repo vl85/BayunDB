@@ -163,6 +163,11 @@ impl Row {
             .filter_map(|col| self.values.get(col))
             .collect()
     }
+    
+    /// Get all values with their corresponding column names
+    pub fn values_with_names(&self) -> impl Iterator<Item = (&String, &DataValue)> {
+        self.values.iter()
+    }
 }
 
 /// Represents query execution error

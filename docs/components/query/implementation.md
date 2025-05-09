@@ -96,9 +96,10 @@ src/query/
 - [ ] Add JOIN operations
   - [ ] NestedLoopJoin
   - [ ] HashJoin (if applicable)
-- [ ] Implement aggregation operators
-  - [ ] GROUP BY support
-  - [ ] Aggregation functions (SUM, COUNT, AVG)
+- [x] Implement aggregation operators
+  - [x] GROUP BY support
+  - [x] Aggregation functions (SUM, COUNT, AVG, MIN, MAX)
+  - [x] HAVING clause support
 - [ ] Add sorting and LIMIT support
   - [ ] In-memory sorting
   - [ ] External sorting for large datasets

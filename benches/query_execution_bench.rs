@@ -55,8 +55,84 @@ fn query_execution_benchmark(c: &mut Criterion) {
         });
     }
     
+    // Aggregation queries for benchmarking
+    let aggregation_queries = [
+        "SELECT COUNT(*) FROM users",
+        "SELECT department_id, COUNT(*) FROM employees GROUP BY department_id",
+        "SELECT department_id, job_title, COUNT(*), AVG(salary) FROM employees GROUP BY department_id, job_title",
+        "SELECT department_id, COUNT(*) FROM employees WHERE status = 'active' GROUP BY department_id HAVING COUNT(*) > 5",
+    ];
+    
+    // Benchmark parsing of aggregation queries
+    for (i, query) in aggregation_queries.iter().enumerate() {
+        group.bench_with_input(BenchmarkId::new("parse_aggregation", i), query, |b, query| {
+            let _buffer_pool = setup_test_environment(1000);
+            
+            b.iter(|| {
+                // Parse query
+                let mut parser = Parser::new(query);
+                let _statement = parser.parse_statement().unwrap();
+            });
+        });
+    }
+    
     group.finish();
 }
 
-criterion_group!(benches, query_execution_benchmark);
+fn aggregation_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Aggregation");
+    
+    // Configure benchmarks
+    group.measurement_time(Duration::from_secs(10));
+    group.sample_size(50);
+    
+    // Define different group sizes to test hash-based aggregation memory usage
+    let group_sizes = [10, 100, 1000, 10000];
+    
+    for &size in &group_sizes {
+        group.bench_with_input(BenchmarkId::new("hash_aggregate", size), &size, |b, &size| {
+            // This is a placeholder for now - in the future this will create
+            // a test table with 'size' groups and benchmark a hash aggregate operation
+            let _buffer_pool = setup_test_environment(1000);
+            
+            b.iter(|| {
+                // In the future, this would:
+                // 1. Create a test table with 'size' distinct groups
+                // 2. Run a query with GROUP BY
+                // 3. Measure the execution time and memory usage
+                
+                // For now, just do some dummy work proportional to size
+                let mut sum = 0;
+                for i in 0..size {
+                    sum += i;
+                }
+                sum
+            });
+        });
+        
+        group.bench_with_input(BenchmarkId::new("sort_aggregate", size), &size, |b, &size| {
+            // This is a placeholder for now - in the future this will create
+            // a test table with 'size' groups and benchmark a sort-based aggregate operation
+            let _buffer_pool = setup_test_environment(1000);
+            
+            b.iter(|| {
+                // In the future, this would:
+                // 1. Create a test table with 'size' distinct groups
+                // 2. Run a query with GROUP BY using sort-based aggregation
+                // 3. Measure the execution time and memory usage
+                
+                // For now, just do some dummy work proportional to size
+                let mut sum = 0;
+                for i in 0..size {
+                    sum += i;
+                }
+                sum
+            });
+        });
+    }
+    
+    group.finish();
+}
+
+criterion_group!(benches, query_execution_benchmark, aggregation_benchmark);
 criterion_main!(benches); 

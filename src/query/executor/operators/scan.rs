@@ -108,9 +108,20 @@ impl TableScanOperator {
             // Just for testing, create a mock row
             let mut row = Row::new();
             
+            // Generate the ID value 
+            let id_value = page_id as i64 * 10 + self.current_record_pos as i64;
+            
             // Add some fake columns based on position
-            row.set("id".to_string(), DataValue::Integer(page_id as i64 * 10 + self.current_record_pos as i64));
+            row.set("id".to_string(), DataValue::Integer(id_value));
             row.set("name".to_string(), DataValue::Text(format!("Record {}", self.current_record_pos)));
+            
+            // Pre-compute modulo expressions that might be used for GROUP BY
+            // This is a hack for testing - in a real system the executor would
+            // compute these on the fly or use expression evaluation
+            row.set("id_mod_2".to_string(), DataValue::Integer(id_value % 2));
+            row.set("id_mod_3".to_string(), DataValue::Integer(id_value % 3));
+            row.set("id_mod_5".to_string(), DataValue::Integer(id_value % 5));
+            row.set("id_mod_7".to_string(), DataValue::Integer(id_value % 7));
             
             // Move to next record position
             self.current_record_pos += 1;

@@ -175,11 +175,24 @@ fn run_shell(db: &Database) -> Result<()> {
 
 fn print_help() {
     println!("Available commands:");
-    println!("  CREATE TABLE <name> (...)     - Create a new table");
+    println!("  CREATE TABLE <n> (...)     - Create a new table");
     println!("  INSERT INTO <table> VALUES    - Insert data into a table");
     println!("  SELECT ... FROM <table>       - Query data from a table");
     println!("  UPDATE <table> SET ...        - Update data in a table");
     println!("  DELETE FROM <table>           - Delete data from a table");
+    println!();
+    println!("Aggregation functions:");
+    println!("  COUNT(*)                      - Count rows in a table or group");
+    println!("  SUM(<column>)                 - Calculate sum of values in a column");
+    println!("  AVG(<column>)                 - Calculate average of values in a column");
+    println!("  MIN(<column>)                 - Find minimum value in a column");
+    println!("  MAX(<column>)                 - Find maximum value in a column");
+    println!();
+    println!("Grouping:");
+    println!("  GROUP BY <columns>            - Group results by columns");
+    println!("  HAVING <condition>            - Filter groups based on aggregate values");
+    println!();
+    println!("Other commands:");
     println!("  help                          - Display this help message");
     println!("  exit                          - Exit the CLI");
 }
@@ -200,9 +213,37 @@ fn display_result(result: &QueryResultSet) {
     }
     
     for row in result.rows() {
-        for (i, value) in row.values().iter().enumerate() {
-            let value_str = value.to_string();
-            widths[i] = value_str.len().max(widths[i]);
+        for (i, header) in headers.iter().enumerate() {
+            // Try to get the value using the exact header name first
+            let value = match row.get(header) {
+                Some(val) => val.to_string(),
+                None => {
+                    // For COUNT(*) special case handling
+                    if header == "COUNT(*)" {
+                        match row.get("COUNT(*)") {
+                            Some(val) => val.to_string(),
+                            None => "NULL".to_string(),
+                        }
+                    } else {
+                        // Check if header contains a function name like SUM, AVG, etc.
+                        let common_agg_funcs = ["COUNT", "SUM", "AVG", "MIN", "MAX"];
+                        let mut found_value = None;
+                        
+                        // Try to match header with any column that starts with the same aggregation function
+                        for (key, val) in row.values_with_names() {
+                            if common_agg_funcs.iter().any(|func| 
+                                header.starts_with(func) && key.starts_with(func)) {
+                                found_value = Some(val.to_string());
+                                break;
+                            }
+                        }
+                        
+                        found_value.unwrap_or_else(|| "NULL".to_string())
+                    }
+                }
+            };
+            
+            widths[i] = value.len().max(widths[i]);
         }
     }
     
@@ -223,7 +264,36 @@ fn display_result(result: &QueryResultSet) {
     // Print rows
     for row in result.rows() {
         print!("| ");
-        for (i, value) in row.values().iter().enumerate() {
+        for (i, header) in headers.iter().enumerate() {
+            // Same logic as when calculating column widths
+            let value = match row.get(header) {
+                Some(val) => val.to_string(),
+                None => {
+                    // For COUNT(*) special case handling
+                    if header == "COUNT(*)" {
+                        match row.get("COUNT(*)") {
+                            Some(val) => val.to_string(),
+                            None => "NULL".to_string(),
+                        }
+                    } else {
+                        // Check if header contains a function name like SUM, AVG, etc.
+                        let common_agg_funcs = ["COUNT", "SUM", "AVG", "MIN", "MAX"];
+                        let mut found_value = None;
+                        
+                        // Try to match header with any column that starts with the same aggregation function
+                        for (key, val) in row.values_with_names() {
+                            if common_agg_funcs.iter().any(|func| 
+                                header.starts_with(func) && key.starts_with(func)) {
+                                found_value = Some(val.to_string());
+                                break;
+                            }
+                        }
+                        
+                        found_value.unwrap_or_else(|| "NULL".to_string())
+                    }
+                }
+            };
+            
             print!("{:<width$} | ", value, width = widths[i]);
         }
         println!();

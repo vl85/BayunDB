@@ -197,57 +197,20 @@ impl Parser {
                             let expr = self.parse_aggregate_function(token_type)?;
                             
                             // Check for optional alias
-                            let alias = if let Some(next_token) = self.peek_token() {
-                                if next_token.token_type == TokenType::IDENTIFIER("AS".to_string()) || 
-                                   next_token.token_type == TokenType::AS {
-                                    self.next_token(); // Consume AS
-                                    if let Some(alias_token) = self.next_token() {
-                                        if let TokenType::IDENTIFIER(alias_name) = alias_token.token_type {
-                                            Some(alias_name)
-                                        } else {
-                                            return Err(ParseError::ExpectedToken(
-                                                TokenType::IDENTIFIER("alias".to_string()),
-                                                alias_token
-                                            ));
-                                        }
-                                    } else {
-                                        return Err(ParseError::EndOfInput);
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            };
+                            let alias = self.parse_optional_alias()?;
                             
                             columns.push(SelectColumn::Expression {
                                 expr: Box::new(expr),
                                 alias,
                             });
                         }
-                        TokenType::IDENTIFIER(_) => {
-                            // Check if this is the start of an expression
+                        TokenType::IDENTIFIER(_) | TokenType::INTEGER(_) | TokenType::FLOAT(_) |
+                        TokenType::STRING(_) | TokenType::LeftParen => {
+                            // These are all tokens that could start an expression
                             let expr = self.parse_expression(0)?;
                             
                             // Check for optional alias
-                            let alias = if self.current_token_is(TokenType::IDENTIFIER("AS".to_string())) || 
-                                           self.current_token_is(TokenType::AS) {
-                                self.next_token(); // Consume AS
-                                if let Some(token) = self.next_token() {
-                                    if let TokenType::IDENTIFIER(name) = token.token_type {
-                                        Some(name)
-                                    } else {
-                                        return Err(ParseError::ExpectedToken(
-                                            TokenType::IDENTIFIER("alias".to_string()),
-                                            token
-                                        ));
-                                    }
-                                } else {
-                                    return Err(ParseError::EndOfInput);
-                                }
-                            } else {
-                                None
-                            };
+                            let alias = self.parse_optional_alias()?;
                             
                             // If this is a simple column reference, use SelectColumn::Column
                             if let Expression::Column(col_ref) = expr {
@@ -635,6 +598,55 @@ impl Parser {
         Ok(Expression::Aggregate { function, arg })
     }
     
+    /// Parse an optional column alias (after AS keyword)
+    fn parse_optional_alias(&mut self) -> ParseResult<Option<String>> {
+        // First check for AS keyword
+        if self.current_token_is(TokenType::IDENTIFIER("AS".to_string())) || 
+           self.current_token_is(TokenType::AS) {
+            self.next_token(); // Consume AS
+            if let Some(token) = self.next_token() {
+                if let TokenType::IDENTIFIER(name) = token.token_type {
+                    Ok(Some(name))
+                } else {
+                    Err(ParseError::ExpectedToken(
+                        TokenType::IDENTIFIER("alias".to_string()),
+                        token
+                    ))
+                }
+            } else {
+                Err(ParseError::EndOfInput)
+            }
+        } else {
+            // We don't have 'AS', check for an implicit alias (identifier)
+            let current_token_opt = self.current_token.clone();
+            
+            if let Some(token) = current_token_opt {
+                // Check for identifier that might be an implicit alias
+                // (without AS keyword)
+                if let TokenType::IDENTIFIER(name) = token.token_type {
+                    // Only treat as alias if it's not a keyword
+                    let is_keyword = name.eq_ignore_ascii_case("FROM") || 
+                                     name.eq_ignore_ascii_case("WHERE") ||
+                                     name.eq_ignore_ascii_case("GROUP") ||
+                                     name.eq_ignore_ascii_case("ORDER") ||
+                                     name.eq_ignore_ascii_case("HAVING") ||
+                                     name.eq_ignore_ascii_case("LIMIT");
+                    
+                    if !is_keyword {
+                        self.next_token(); // Consume the identifier
+                        Ok(Some(name))
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+    }
+    
     // Placeholder implementations for other statement types
     fn parse_insert(&mut self) -> ParseResult<Statement> {
         Err(ParseError::InvalidSyntax("INSERT not implemented yet".to_string()))
@@ -674,6 +686,7 @@ fn token_to_operator(token_type: &TokenType) -> ParseResult<Operator> {
         TokenType::MINUS => Ok(Operator::Minus),
         TokenType::MULTIPLY => Ok(Operator::Multiply),
         TokenType::DIVIDE => Ok(Operator::Divide),
+        TokenType::MODULO => Ok(Operator::Modulo),
         _ => Err(ParseError::InvalidSyntax(format!("Not an operator: {:?}", token_type))),
     }
 }
@@ -684,7 +697,7 @@ fn get_operator_precedence(token_type: &TokenType) -> u8 {
         TokenType::EQUALS | TokenType::NotEqual | TokenType::LessThan 
         | TokenType::GreaterThan | TokenType::LessEqual | TokenType::GreaterEqual => 1,
         TokenType::PLUS | TokenType::MINUS => 2,
-        TokenType::MULTIPLY | TokenType::DIVIDE => 3,
+        TokenType::MULTIPLY | TokenType::DIVIDE | TokenType::MODULO => 3,
         _ => 0,
     }
 }

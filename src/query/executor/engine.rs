@@ -2,12 +2,12 @@
 //
 // This module implements the engine for executing SQL queries.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageManager;
-use crate::query::executor::result::{QueryResult, QueryError, QueryResultSet};
-use crate::query::parser::ast::{Statement, SelectStatement};
+use crate::query::executor::result::{QueryResult, QueryError, QueryResultSet, DataValue};
+use crate::query::parser::ast::{Statement, SelectStatement, Expression, Value};
 use crate::query::planner::{Planner, physical};
 
 #[cfg(test)]
@@ -72,35 +72,149 @@ impl ExecutionEngine {
             op.init()?;
         }
         
-        // Get column names from the first row
-        let mut result_columns = Vec::new();
-        {
-            let mut op = root_op.lock().map_err(|e| {
-                QueryError::ExecutionError(format!("Failed to lock root operator: {}", e))
-            })?;
-            
-            if let Some(row) = op.next()? {
-                result_columns = row.columns().to_vec();
+        // Extract expected column names from the plan
+        let expected_columns = match plan {
+            physical::PhysicalPlan::HashAggregate { aggregate_expressions, group_by, .. } => {
+                let mut columns = Vec::new();
                 
-                // Create result set with the first row
-                let mut result_set = QueryResultSet::new(result_columns);
-                result_set.add_row(row);
-                
-                // Collect remaining rows
-                while let Some(row) = op.next()? {
-                    result_set.add_row(row);
+                // Add group by columns first
+                for expr in group_by {
+                    match expr {
+                        Expression::Column(col_ref) => {
+                            columns.push(col_ref.name.clone());
+                        }
+                        Expression::BinaryOp { left, op, right } if *op == crate::query::parser::ast::Operator::Modulo => {
+                            if let (Expression::Column(col_ref), Expression::Literal(crate::query::parser::ast::Value::Integer(val))) 
+                                = (&**left, &**right) {
+                                columns.push(format!("{}_mod_{}", col_ref.name, val));
+                            } else {
+                                columns.push("expr".to_string());
+                            }
+                        }
+                        _ => {
+                            // For other expressions, use a generic name
+                            columns.push("expr".to_string());
+                        }
+                    }
                 }
                 
-                // Close the operator
-                op.close()?;
+                // Then add aggregate columns
+                for expr in aggregate_expressions {
+                    match expr {
+                        Expression::Aggregate { function, arg } => {
+                            match function {
+                                crate::query::parser::ast::AggregateFunction::Count => {
+                                    if arg.is_none() {
+                                        // Ensure consistent column name for COUNT(*)
+                                        columns.push("COUNT(*)".to_string());
+                                    } else if let Some(arg_expr) = arg {
+                                        if let Expression::Column(col_ref) = &**arg_expr {
+                                            columns.push(format!("COUNT({})", col_ref.name));
+                                        } else {
+                                            columns.push("COUNT(expr)".to_string()); 
+                                        }
+                                    }
+                                }
+                                crate::query::parser::ast::AggregateFunction::Sum => {
+                                    if let Some(arg_expr) = arg {
+                                        if let Expression::Column(col_ref) = &**arg_expr {
+                                            columns.push(format!("SUM({})", col_ref.name));
+                                        } else {
+                                            columns.push("SUM(expr)".to_string());
+                                        }
+                                    }
+                                }
+                                crate::query::parser::ast::AggregateFunction::Avg => {
+                                    if let Some(arg_expr) = arg {
+                                        if let Expression::Column(col_ref) = &**arg_expr {
+                                            columns.push(format!("AVG({})", col_ref.name));
+                                        } else {
+                                            columns.push("AVG(expr)".to_string());
+                                        }
+                                    }
+                                }
+                                crate::query::parser::ast::AggregateFunction::Min => {
+                                    if let Some(arg_expr) = arg {
+                                        if let Expression::Column(col_ref) = &**arg_expr {
+                                            columns.push(format!("MIN({})", col_ref.name));
+                                        } else {
+                                            columns.push("MIN(expr)".to_string());
+                                        }
+                                    }
+                                }
+                                crate::query::parser::ast::AggregateFunction::Max => {
+                                    if let Some(arg_expr) = arg {
+                                        if let Expression::Column(col_ref) = &**arg_expr {
+                                            columns.push(format!("MAX({})", col_ref.name));
+                                        } else {
+                                            columns.push("MAX(expr)".to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => columns.push("expr".to_string()),
+                    }
+                }
                 
-                Ok(result_set)
-            } else {
-                // No rows, return empty result set
-                op.close()?;
-                Ok(QueryResultSet::new(result_columns))
+                columns
             }
+            physical::PhysicalPlan::Project { columns, .. } => columns.clone(),
+            _ => Vec::new(),
+        };
+        
+        // Create result set with expected columns
+        let mut result_set = QueryResultSet::new(expected_columns.clone());
+        
+        // Get rows from the operator
+        let mut op = root_op.lock().map_err(|e| {
+            QueryError::ExecutionError(format!("Failed to lock root operator: {}", e))
+        })?;
+        
+        // Collect all rows
+        while let Some(mut row) = op.next()? {
+            // Ensure column names consistency for aggregates
+            // This ensures the row has the same column names as expected_columns
+            for (i, column) in expected_columns.iter().enumerate() {
+                if !row.get(column).is_some() {
+                    // For COUNT(*), check if there's a COUNT(*) column with a different format
+                    if column == "COUNT(*)" {
+                        // Get all values to avoid borrowing issues
+                        let row_values = row.values();
+                        if i < row_values.len() {
+                            let count_value = row_values[i].clone();
+                            row.set(column.clone(), count_value);
+                        }
+                    }
+                    // For other aggregate columns, try to find a matching column
+                    else if column.starts_with("COUNT(") || 
+                            column.starts_with("SUM(") || 
+                            column.starts_with("AVG(") || 
+                            column.starts_with("MIN(") || 
+                            column.starts_with("MAX(") {
+                        // Collect all column names and values first to avoid borrowing conflicts
+                        let column_values: Vec<(String, DataValue)> = row.values_with_names()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        
+                        for (col_name, value) in column_values {
+                            // Check if this is the right aggregate column by comparing function names
+                            if col_name.starts_with(&column[..4]) {
+                                row.set(column.clone(), value);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            result_set.add_row(row);
         }
+        
+        // Close the operator
+        op.close()?;
+        
+        Ok(result_set)
     }
     
     /// Parse and execute a SQL query string

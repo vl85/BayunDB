@@ -17,6 +17,10 @@ This document outlines the planned development steps for BayunDB, organized by c
    - Parser support for aggregate functions (COUNT, SUM, AVG, MIN, MAX)
    - Logical planning for aggregation
    - Physical planning for aggregation
+   - Execution engine implementation for aggregation operators (HashAggregate, SortAggregate)
+   - GROUP BY, HAVING, and aggregation function support (COUNT, SUM, AVG, MIN, MAX)
+   - Integration tests for aggregation queries
+   - CLI support for aggregation queries
 
 2. **Performance Benchmarking**
    - Buffer pool performance benchmarks
@@ -40,7 +44,6 @@ This document outlines the planned development steps for BayunDB, organized by c
 ## Current Development Focus
 
 1. **Query Execution Enhancements**
-   - [Add aggregation operators (GROUP BY, COUNT, SUM, etc.)](implementation-plans/aggregation-operators.md)
    - Add ORDER BY implementation
    - Add LIMIT/OFFSET support
    - Add subquery support
@@ -69,14 +72,7 @@ This document outlines the planned development steps for BayunDB, organized by c
 
 ## In Progress Features
 
-1. **Aggregation Operators**
-   - ✅ Parser support for GROUP BY, HAVING, and aggregate functions
-   - ✅ Logical planning for aggregation
-   - ✅ Physical planning for aggregation (HashAggregate)
-   - ⏳ Execution engine implementation
-   - See [aggregation-operators implementation plan](implementation-plans/aggregation-operators.md) for details
-
-2. **Schema Management**
+1. **Schema Management**
    - Parser support for CREATE TABLE statements
    - Schema validation and type checking
    - Table metadata management

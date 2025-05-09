@@ -62,6 +62,7 @@ pub enum TokenType {
     MINUS,          // -
     MULTIPLY,       // *
     DIVIDE,         // /
+    MODULO,         // %
     
     // Punctuation
     SEMICOLON,      // ;
@@ -287,6 +288,7 @@ impl<'a> Lexer<'a> {
                     '-' => token.token_type = TokenType::MINUS,
                     '*' => token.token_type = TokenType::MULTIPLY,
                     '/' => token.token_type = TokenType::DIVIDE,
+                    '%' => token.token_type = TokenType::MODULO,
                     '=' => token.token_type = TokenType::EQUALS,
                     '<' => {
                         if let Some(next_ch) = self.peek_char() {

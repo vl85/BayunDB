@@ -424,3 +424,4 @@ memory
 transaction_demo.db
 .bayundb_history
 !/src/bin
+test_agg.db

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use crate::query::executor::operators::{Operator, create_table_scan, create_filter, create_projection, 
     create_nested_loop_join, create_hash_join, create_hash_aggregate};
 use crate::query::executor::result::QueryResult;
-use crate::query::parser::ast::{Expression, JoinType};
+use crate::query::parser::ast::{Expression, JoinType, AggregateFunction, Operator as AstOperator, Value};
 use crate::query::planner::logical::LogicalPlan;
 
 /// Represents a node in the physical query plan
@@ -133,7 +133,95 @@ impl fmt::Display for PhysicalPlan {
 /// This is a simplified version for now - in a real system you'd have
 /// a predicate evaluator that can handle complex expressions
 fn expression_to_predicate(expr: &Expression) -> String {
-    format!("{:?}", expr) // Basic transformation for now
+    match expr {
+        Expression::Aggregate { function, arg } => {
+            match function {
+                AggregateFunction::Count => {
+                    if arg.is_none() {
+                        "COUNT(*)".to_string()
+                    } else if let Some(arg_expr) = arg {
+                        format!("COUNT({})", expression_to_predicate(arg_expr))
+                    } else {
+                        "COUNT(*)".to_string()
+                    }
+                },
+                AggregateFunction::Sum => {
+                    if let Some(arg_expr) = arg {
+                        format!("SUM({})", expression_to_predicate(arg_expr))
+                    } else {
+                        "SUM(*)".to_string() // This shouldn't happen, but just in case
+                    }
+                },
+                AggregateFunction::Avg => {
+                    if let Some(arg_expr) = arg {
+                        format!("AVG({})", expression_to_predicate(arg_expr))
+                    } else {
+                        "AVG(*)".to_string() // This shouldn't happen, but just in case
+                    }
+                },
+                AggregateFunction::Min => {
+                    if let Some(arg_expr) = arg {
+                        format!("MIN({})", expression_to_predicate(arg_expr))
+                    } else {
+                        "MIN(*)".to_string() // This shouldn't happen, but just in case
+                    }
+                },
+                AggregateFunction::Max => {
+                    if let Some(arg_expr) = arg {
+                        format!("MAX({})", expression_to_predicate(arg_expr))
+                    } else {
+                        "MAX(*)".to_string() // This shouldn't happen, but just in case
+                    }
+                },
+            }
+        },
+        Expression::Column(col_ref) => {
+            if let Some(table) = &col_ref.table {
+                format!("{}.{}", table, col_ref.name)
+            } else {
+                col_ref.name.clone()
+            }
+        },
+        Expression::BinaryOp { left, op, right } => {
+            let left_str = expression_to_predicate(left);
+            let right_str = expression_to_predicate(right);
+            
+            match op {
+                AstOperator::Equals => format!("{} = {}", left_str, right_str),
+                AstOperator::NotEquals => format!("{} <> {}", left_str, right_str),
+                AstOperator::LessThan => format!("{} < {}", left_str, right_str),
+                AstOperator::GreaterThan => format!("{} > {}", left_str, right_str),
+                AstOperator::LessEquals => format!("{} <= {}", left_str, right_str),
+                AstOperator::GreaterEquals => format!("{} >= {}", left_str, right_str),
+                AstOperator::And => format!("{} AND {}", left_str, right_str),
+                AstOperator::Or => format!("{} OR {}", left_str, right_str),
+                AstOperator::Plus => format!("{} + {}", left_str, right_str),
+                AstOperator::Minus => format!("{} - {}", left_str, right_str),
+                AstOperator::Multiply => format!("{} * {}", left_str, right_str),
+                AstOperator::Divide => format!("{} / {}", left_str, right_str),
+                AstOperator::Modulo => format!("{} % {}", left_str, right_str),
+                _ => format!("{:?} {:?} {:?}", left, op, right),
+            }
+        },
+        Expression::Literal(value) => {
+            match value {
+                Value::Null => "NULL".to_string(),
+                Value::Integer(i) => i.to_string(),
+                Value::Float(f) => f.to_string(),
+                Value::String(s) => format!("'{}'", s),
+                Value::Boolean(b) => if *b { "TRUE".to_string() } else { "FALSE".to_string() },
+            }
+        },
+        Expression::Function { name, args } => {
+            let args_str = args.iter()
+                .map(|arg| expression_to_predicate(arg))
+                .collect::<Vec<_>>()
+                .join(", ");
+                
+            format!("{}({})", name, args_str)
+        },
+        _ => format!("{:?}", expr), // Fallback for other cases
+    }
 }
 
 /// Create a physical plan from a logical plan
@@ -283,19 +371,37 @@ pub fn build_operator_tree(plan: &PhysicalPlan) -> QueryResult<Arc<Mutex<dyn Ope
             // This is a simplified approach - in a real system, we'd have a more 
             // sophisticated mechanism to evaluate expressions
             
-            // Convert group_by expressions to strings
+            // Convert group_by expressions to strings - for modulo expressions, use aliases
             let group_by_columns = group_by.iter()
-                .map(|expr| format!("{:?}", expr))
+                .map(|expr| {
+                    match expr {
+                        // For binary op expressions like (id % 5), use a computed column name
+                        Expression::BinaryOp { left, op, right } if *op == AstOperator::Modulo => {
+                            if let (Expression::Column(col_ref), Expression::Literal(Value::Integer(val))) 
+                                = (&**left, &**right) {
+                                format!("{}_mod_{}", col_ref.name, val)
+                            } else {
+                                format!("{}", expression_to_predicate(expr))
+                            }
+                        },
+                        // For normal column references, use the column name
+                        Expression::Column(col_ref) => {
+                            col_ref.name.clone()
+                        },
+                        // For other expressions, convert to string
+                        _ => format!("{}", expression_to_predicate(expr))
+                    }
+                })
                 .collect();
                 
             // Convert aggregate expressions to strings
             let agg_expr_strings = aggregate_expressions.iter()
-                .map(|expr| format!("{:?}", expr))
+                .map(|expr| format!("{}", expression_to_predicate(expr)))
                 .collect();
                 
             // Convert having clause if present
             let having_str = having.as_ref()
-                .map(|expr| format!("{:?}", expr));
+                .map(|expr| format!("{}", expression_to_predicate(expr)));
                 
             // Create the hash aggregate operator
             create_hash_aggregate(input_op, group_by_columns, agg_expr_strings, having_str)

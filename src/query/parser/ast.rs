@@ -149,6 +149,7 @@ pub enum Operator {
     Minus,
     Multiply,
     Divide,
+    Modulo,
 }
 
 impl Operator {
