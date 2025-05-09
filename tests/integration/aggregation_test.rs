@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use bayundb::query::parser::Parser;
+use bayundb::query::parser::parse;
 use bayundb::query::parser::ast::{Statement, AggregateFunction, Expression};
 use bayundb::query::executor::result::{QueryResultSet, DataValue, QueryError};
 use bayundb::query::executor::engine::ExecutionEngine;
@@ -12,9 +12,8 @@ use tempfile::tempdir;
 fn test_count_query() -> Result<()> {
     // Test a simple COUNT(*) query
     let sql = "SELECT COUNT(*) FROM users";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     // Verify the AST structure
     if let Statement::Select(select) = statement {
@@ -46,9 +45,8 @@ fn test_count_query() -> Result<()> {
 fn test_group_by_query() -> Result<()> {
     // Test GROUP BY query
     let sql = "SELECT department_id, COUNT(*) FROM employees GROUP BY department_id";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     // Verify the AST structure
     if let Statement::Select(select) = statement {
@@ -93,9 +91,8 @@ fn test_group_by_query() -> Result<()> {
 fn test_having_clause() -> Result<()> {
     // Test HAVING clause
     let sql = "SELECT department_id, COUNT(*) FROM employees GROUP BY department_id HAVING COUNT(*) > 5";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     // Verify the AST structure
     if let Statement::Select(select) = statement {
@@ -135,9 +132,8 @@ fn test_multiple_aggregate_functions() -> Result<()> {
     let sql = "SELECT department_id, COUNT(*), SUM(salary), AVG(salary), MIN(salary), MAX(salary) \
                FROM employees \
                GROUP BY department_id";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     // Verify the AST structure
     if let Statement::Select(select) = statement {
@@ -188,9 +184,8 @@ fn test_complex_aggregation_query() -> Result<()> {
                WHERE status = 'active' \
                GROUP BY department_id, job_title \
                HAVING COUNT(*) > 2";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     // Verify the AST structure
     if let Statement::Select(select) = statement {
@@ -204,13 +199,17 @@ fn test_complex_aggregation_query() -> Result<()> {
         let group_by = select.group_by.unwrap();
         assert_eq!(group_by.len(), 2, "Expected two columns in GROUP BY");
         
-        // Check HAVING has a comparison condition
+        // Check HAVING contains COUNT(*)
         if let Some(having) = &select.having {
             match &**having {
-                Expression::BinaryOp { op, .. } => {
-                    assert_eq!(*op, bayundb::query::parser::ast::Operator::GreaterThan);
+                Expression::BinaryOp { left, .. } => {
+                    if let Expression::Aggregate { function, .. } = &**left {
+                        assert_eq!(*function, AggregateFunction::Count);
+                    } else {
+                        panic!("Expected aggregate function in HAVING clause");
+                    }
                 }
-                _ => panic!("Expected comparison operation in HAVING clause"),
+                _ => panic!("Expected binary operation in HAVING clause"),
             }
         }
         

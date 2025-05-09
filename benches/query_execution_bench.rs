@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bayundb::query::parser::Parser;
+use bayundb::query::parser::parse;
 // These components aren't available yet in the codebase
 // use bayundb::query::planner::QueryPlanner;
 // use bayundb::query::executor::QueryExecutor;
@@ -43,8 +43,7 @@ fn query_execution_benchmark(c: &mut Criterion) {
             
             b.iter(|| {
                 // Parse query
-                let mut parser = Parser::new(query);
-                let _statement = parser.parse_statement().unwrap();
+                let _statement = parse(query).unwrap();
                 
                 // Planning and execution are disabled until those components are ready
                 // let planner = QueryPlanner::new(catalog.clone());
@@ -70,8 +69,7 @@ fn query_execution_benchmark(c: &mut Criterion) {
             
             b.iter(|| {
                 // Parse query
-                let mut parser = Parser::new(query);
-                let _statement = parser.parse_statement().unwrap();
+                let _statement = parse(query).unwrap();
             });
         });
     }

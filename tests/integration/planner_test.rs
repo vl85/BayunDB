@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use bayundb::query::parser::Parser;
+use bayundb::query::parser::parse;
 use bayundb::query::parser::ast::Statement;
 use bayundb::query::planner::logical::{self, LogicalPlan};
 use bayundb::query::planner::physical::{self, PhysicalPlan};
@@ -8,9 +8,8 @@ use bayundb::query::planner::physical::{self, PhysicalPlan};
 fn test_logical_plan_generation() -> Result<()> {
     // Test conversion from AST to logical plan
     let sql = "SELECT id, name FROM test_table WHERE id > 5";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     if let Statement::Select(select) = statement {
         // Create logical plan from SELECT statement
@@ -49,9 +48,8 @@ fn test_logical_plan_generation() -> Result<()> {
 fn test_physical_plan_generation() -> Result<()> {
     // Test conversion from logical plan to physical plan
     let sql = "SELECT id, name FROM test_table WHERE id > 5";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     if let Statement::Select(select) = statement {
         // Create logical plan from SELECT statement
@@ -98,9 +96,8 @@ fn test_physical_plan_generation() -> Result<()> {
 fn test_wildcard_projection() -> Result<()> {
     // Test query with wildcard projection
     let sql = "SELECT * FROM employees";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     if let Statement::Select(select) = statement {
         // Check we have wildcard column

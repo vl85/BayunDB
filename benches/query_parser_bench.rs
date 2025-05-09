@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use std::time::Duration;
 
-use bayundb::query::parser::Parser;
+use bayundb::query::parser::parse;
 use bayundb::query::parser::ast::Statement;
 
 fn query_parser_benchmark(c: &mut Criterion) {
@@ -21,8 +21,7 @@ fn query_parser_benchmark(c: &mut Criterion) {
     for (i, query) in simple_queries.iter().enumerate() {
         group.bench_with_input(BenchmarkId::new("simple_select", i), query, |b, query| {
             b.iter(|| {
-                let mut parser = Parser::new(query);
-                let _ = parser.parse_statement().unwrap();
+                let _ = parse(query).unwrap();
             });
         });
     }
@@ -42,8 +41,7 @@ fn query_parser_benchmark(c: &mut Criterion) {
     for (i, query) in join_queries.iter().enumerate() {
         group.bench_with_input(BenchmarkId::new("join_query", i), query, |b, query| {
             b.iter(|| {
-                let mut parser = Parser::new(query);
-                let _ = parser.parse_statement().unwrap();
+                let _ = parse(query).unwrap();
             });
         });
     }
@@ -58,10 +56,9 @@ fn query_parser_benchmark(c: &mut Criterion) {
     for (i, query) in complex_queries.iter().enumerate() {
         group.bench_with_input(BenchmarkId::new("complex_query", i), query, |b, query| {
             b.iter(|| {
-                let mut parser = Parser::new(query);
                 // These complex queries may not be fully implemented yet but we can still benchmark
                 // what we have by using a match to handle results or errors
-                match parser.parse_statement() {
+                match parse(query) {
                     Ok(stmt) => {
                         // Verify the statement is a valid SELECT statement
                         if let Statement::Select(_) = stmt {

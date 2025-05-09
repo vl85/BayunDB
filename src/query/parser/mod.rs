@@ -7,9 +7,12 @@
 pub mod lexer;
 pub mod ast;
 pub mod parser;
+pub mod components;
 
 // Export key types
-pub use self::parser::Parser;
+pub use self::parser::parse;
 pub use self::lexer::Lexer;
 pub use self::lexer::Token;
-pub use self::ast::Statement; 
+pub use self::ast::Statement;
+// Re-export the parser type from components for backward compatibility
+pub use self::components::Parser; 

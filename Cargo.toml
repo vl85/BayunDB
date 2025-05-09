@@ -79,6 +79,10 @@ path = "tests/integration/schema_test.rs"
 name = "validation_test"
 path = "tests/integration/validation_test.rs"
 
+[[test]]
+name = "schema_management_test"
+path = "tests/integration/schema_management_test.rs"
+
 [[example]]
 name = "debug_validation"
 path = "examples/debug_validation.rs"

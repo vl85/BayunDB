@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, AggregateFunction};
+use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, AggregateFunction, ColumnDef};
 
 /// Represents a node in the logical query plan
 #[derive(Debug, Clone)]
@@ -52,6 +52,13 @@ pub enum LogicalPlan {
         /// Having clause (optional)
         having: Option<Expression>,
     },
+    /// Create a new table
+    CreateTable {
+        /// Table name
+        table_name: String,
+        /// Column definitions
+        columns: Vec<ColumnDef>,
+    },
 }
 
 impl fmt::Display for LogicalPlan {
@@ -96,6 +103,9 @@ impl fmt::Display for LogicalPlan {
                 };
                 
                 write!(f, "Aggregate: [{}]{}{}\n  {}", agg_str, group_by_str, having_str, input)
+            }
+            LogicalPlan::CreateTable { table_name, columns } => {
+                write!(f, "CreateTable: {} with {} columns", table_name, columns.len())
             }
         }
     }

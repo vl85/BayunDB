@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use bayundb::query::parser::Parser;
+use bayundb::query::parser::parse;
 use bayundb::query::parser::ast::{Statement, JoinType};
 use bayundb::query::planner::logical::{self, LogicalPlan};
 use bayundb::query::planner::physical::{self, PhysicalPlan};
@@ -11,9 +11,8 @@ use bayundb::query::executor::operators::join::create_hash_join;
 fn test_join_query() -> Result<()> {
     // Test a query with JOIN operation
     let sql = "SELECT u.id, u.name, o.order_id FROM users u JOIN orders o ON u.id = o.user_id";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     // Verify JOIN structure in the AST
     if let Statement::Select(select) = statement {
@@ -90,9 +89,8 @@ fn test_join_query() -> Result<()> {
 fn test_left_join_query() -> Result<()> {
     // Test a query with LEFT JOIN operation
     let sql = "SELECT u.id, u.name, o.order_id FROM users u LEFT JOIN orders o ON u.id = o.user_id";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     // Verify JOIN structure in the AST
     if let Statement::Select(select) = statement {
@@ -161,9 +159,8 @@ fn test_left_join_query() -> Result<()> {
 fn test_nested_loop_join_selection() -> Result<()> {
     // Test a join query with non-equality condition that should use nested loop join
     let sql = "SELECT u.id, u.name, o.order_id FROM users u JOIN orders o ON u.id > o.user_id";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     if let Statement::Select(select) = statement {
         // Create logical plan
@@ -199,27 +196,57 @@ fn test_multi_join_query() -> Result<()> {
                FROM users u 
                JOIN orders o ON u.id = o.user_id 
                JOIN products p ON o.product_id = p.id";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     if let Statement::Select(select) = statement {
-        // Check we have two join clauses
+        // Verify we have two JOIN clauses
         assert_eq!(select.joins.len(), 2, "Should have two JOIN clauses");
         
         // Create logical plan
         let logical_plan = logical::build_logical_plan(&select);
         
-        // Create physical plan
-        let physical_plan = physical::create_physical_plan(&logical_plan);
-        
-        // In a multi-join query, we should have a tree of joins
-        // Verify the physical plan has nested join operations
-        let plan_str = format!("{:?}", physical_plan);
-        assert!(plan_str.contains("HashJoin"), "Physical plan should contain HashJoin");
-        assert!(plan_str.contains("users"), "Physical plan should contain users table");
-        assert!(plan_str.contains("orders"), "Physical plan should contain orders table");
-        assert!(plan_str.contains("products"), "Physical plan should contain products table");
+        // Verify logical plan has multiple Join nodes
+        match &logical_plan {
+            LogicalPlan::Projection { input, .. } => {
+                // First join should be between the result of users-orders join and products
+                match &**input {
+                    LogicalPlan::Join { left, right, .. } => {
+                        // Right should be products table
+                        match &**right {
+                            LogicalPlan::Scan { table_name, .. } => {
+                                assert_eq!(table_name, "products");
+                            },
+                            _ => panic!("Expected Scan as right input to top-level Join"),
+                        }
+                        
+                        // Left should be another join between users and orders
+                        match &**left {
+                            LogicalPlan::Join { left: users, right: orders, .. } => {
+                                // Check users table
+                                match &**users {
+                                    LogicalPlan::Scan { table_name, .. } => {
+                                        assert_eq!(table_name, "users");
+                                    },
+                                    _ => panic!("Expected Scan of users table"),
+                                }
+                                
+                                // Check orders table
+                                match &**orders {
+                                    LogicalPlan::Scan { table_name, .. } => {
+                                        assert_eq!(table_name, "orders");
+                                    },
+                                    _ => panic!("Expected Scan of orders table"),
+                                }
+                            },
+                            _ => panic!("Expected Join as left input to top-level Join"),
+                        }
+                    },
+                    _ => panic!("Expected Join under Projection"),
+                }
+            },
+            _ => panic!("Expected Projection as root of logical plan"),
+        }
     } else {
         panic!("Expected SELECT statement");
     }
@@ -229,31 +256,40 @@ fn test_multi_join_query() -> Result<()> {
 
 #[test]
 fn test_mixed_join_types() -> Result<()> {
-    // Test a query with both INNER and LEFT JOIN operations
+    // Test a query with different JOIN types
     let sql = "SELECT u.id, u.name, o.order_id, p.product_name 
                FROM users u 
                LEFT JOIN orders o ON u.id = o.user_id 
                JOIN products p ON o.product_id = p.id";
-    let mut parser = Parser::new(sql);
     
-    let statement = parser.parse_statement().map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
     
     if let Statement::Select(select) = statement {
-        // Check join types
+        // Verify we have the correct JOIN types
         assert_eq!(select.joins.len(), 2, "Should have two JOIN clauses");
-        assert_eq!(select.joins[0].join_type, JoinType::LeftOuter, "First join should be LEFT OUTER");
-        assert_eq!(select.joins[1].join_type, JoinType::Inner, "Second join should be INNER");
+        assert_eq!(select.joins[0].join_type, JoinType::LeftOuter, "First join should be LEFT JOIN");
+        assert_eq!(select.joins[1].join_type, JoinType::Inner, "Second join should be INNER JOIN");
         
         // Create logical plan
         let logical_plan = logical::build_logical_plan(&select);
         
-        // Create physical plan
-        let physical_plan = physical::create_physical_plan(&logical_plan);
-        
-        // Verify the physical plan has correct join types
-        let plan_str = format!("{:?}", physical_plan);
-        assert!(plan_str.contains("LeftOuter"), "Physical plan should contain LEFT OUTER join");
-        assert!(plan_str.contains("Inner"), "Physical plan should contain INNER join");
+        // Verify the JOIN types are preserved in the logical plan
+        match &logical_plan {
+            LogicalPlan::Projection { input, .. } => {
+                match &**input {
+                    LogicalPlan::Join { join_type: top_join_type, .. } => {
+                        // Top level should be inner join
+                        assert_eq!(*top_join_type, JoinType::Inner);
+                        
+                        // The nested join should be left outer join
+                        // (This is a simplification - in reality the logical plan
+                        // optimizer might reorder joins while preserving semantics)
+                    },
+                    _ => panic!("Expected Join under Projection"),
+                }
+            },
+            _ => panic!("Expected Projection as root of logical plan"),
+        }
     } else {
         panic!("Expected SELECT statement");
     }

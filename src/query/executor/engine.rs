@@ -232,12 +232,12 @@ impl ExecutionEngine {
     /// Execute a CREATE TABLE statement
     fn execute_create(&self, create: CreateStatement) -> QueryResult<QueryResultSet> {
         use crate::catalog::{Catalog, Table, Column};
+        use crate::query::executor::result::DataValue;
         
         // Get the global catalog instance
         let catalog_instance = Catalog::instance();
-        let catalog = catalog_instance.write().unwrap();
         
-        // Convert AST column definitions to catalog columns
+        // Create the table and columns outside the lock scope
         let mut columns = Vec::new();
         for col_def in &create.columns {
             let column = Column::from_column_def(col_def)
@@ -248,21 +248,20 @@ impl ExecutionEngine {
         // Create the table
         let table = Table::new(create.table_name.clone(), columns);
         
-        // Add the table to the catalog
-        catalog.create_table(table.clone())
-            .map_err(|e| QueryError::ExecutionError(format!("Failed to create table: {}", e)))?;
+        // Use a block to ensure the write lock is released after we're done with it
+        {
+            let mut catalog = catalog_instance.write().unwrap();
+            catalog.create_table(table)
+                .map_err(|e| QueryError::ExecutionError(format!("Failed to create table: {}", e)))?;
+        }
         
-        // Create the table on disk
-        // (In a real implementation, this would allocate pages for the table data)
-        
-        // Return an empty result set
-        let mut result_set = QueryResultSet::new(vec!["result".to_string()]);
-        result_set.add_row(Row::from_values(
+        // Return success message
+        let mut result = QueryResultSet::new(vec!["result".to_string()]);
+        result.add_row(Row::from_values(
             vec!["result".to_string()],
             vec![DataValue::Text(format!("Table {} created successfully", create.table_name))]
         ));
-        
-        Ok(result_set)
+        Ok(result)
     }
 }
 

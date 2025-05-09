@@ -14,7 +14,7 @@ pub use self::physical::PhysicalPlan;
 pub use self::optimizer::Optimizer;
 
 use crate::query::parser::ast::Statement;
-use crate::query::parser::Parser;
+use crate::query::parser::parse;
 use crate::query::executor::result::QueryResult;
 
 /// The Planner is responsible for translating SQL statements into executable query plans
@@ -33,8 +33,7 @@ impl Planner {
     /// Create a logical plan from a SQL query string
     pub fn create_logical_plan_from_sql(&self, sql: &str) -> QueryResult<LogicalPlan> {
         // Parse the SQL into an AST
-        let mut parser = Parser::new(sql);
-        let stmt = parser.parse_statement()
+        let stmt = parse(sql)
             .map_err(|e| crate::query::executor::result::QueryError::PlanningError(
                 format!("Parse error: {:?}", e)
             ))?;
@@ -52,6 +51,10 @@ impl Planner {
     pub fn create_logical_plan(&self, stmt: &Statement) -> QueryResult<LogicalPlan> {
         match stmt {
             Statement::Select(select_stmt) => Ok(logical::build_logical_plan(select_stmt)),
+            Statement::Create(create_stmt) => Ok(LogicalPlan::CreateTable {
+                table_name: create_stmt.table_name.clone(),
+                columns: create_stmt.columns.clone(),
+            }),
             _ => Err(crate::query::executor::result::QueryError::PlanningError(
                 format!("Unsupported statement type: {}", stmt)
             )),

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use crate::query::executor::operators::{Operator, create_table_scan, create_filter, create_projection, 
     create_nested_loop_join, create_hash_join, create_hash_aggregate};
 use crate::query::executor::result::QueryResult;
-use crate::query::parser::ast::{Expression, JoinType, AggregateFunction, Operator as AstOperator, Value};
+use crate::query::parser::ast::{Expression, JoinType, AggregateFunction, Operator as AstOperator, Value, ColumnDef, DataType};
 use crate::query::planner::logical::LogicalPlan;
 
 /// Represents a node in the physical query plan
@@ -73,6 +73,13 @@ pub enum PhysicalPlan {
         /// Having clause (optional)
         having: Option<Expression>,
     },
+    /// Create Table operator
+    CreateTable {
+        /// Table name
+        table_name: String,
+        /// Column definitions
+        columns: Vec<ColumnDef>,
+    },
 }
 
 impl fmt::Display for PhysicalPlan {
@@ -124,6 +131,12 @@ impl fmt::Display for PhysicalPlan {
                 };
                 
                 write!(f, "HashAggregate: [{}]{}{}\n  {}", agg_str, group_by_str, having_str, input)
+            }
+            PhysicalPlan::CreateTable { table_name, columns } => {
+                write!(f, "CreateTable: {} with columns: {}", table_name, columns.iter()
+                    .map(|c| format!("{:?}", c))
+                    .collect::<Vec<_>>()
+                    .join(", "))
             }
         }
     }
@@ -200,7 +213,7 @@ fn expression_to_predicate(expr: &Expression) -> String {
     }
 }
 
-/// Create a physical plan from a logical plan
+/// Convert a logical plan to a physical plan
 pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
     match logical_plan {
         LogicalPlan::Scan { table_name, alias } => {
@@ -210,296 +223,258 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
             }
         }
         LogicalPlan::Filter { predicate, input } => {
-            // First convert the input to a physical plan
-            let physical_input = create_physical_plan(input);
-            
-            // Then create the filter operator
             PhysicalPlan::Filter {
-                input: Box::new(physical_input),
+                input: Box::new(create_physical_plan(input)),
                 predicate: predicate.clone(),
             }
         }
         LogicalPlan::Projection { columns, input } => {
-            // First convert the input to a physical plan
-            let physical_input = create_physical_plan(input);
-            
-            // Then create the projection operator
             PhysicalPlan::Project {
-                input: Box::new(physical_input),
+                input: Box::new(create_physical_plan(input)),
                 columns: columns.clone(),
             }
         }
         LogicalPlan::Join { left, right, condition, join_type } => {
-            // Convert both inputs to physical plans
-            let physical_left = create_physical_plan(left);
-            let physical_right = create_physical_plan(right);
+            // Choose between hash join and nested loop join based on the condition
+            // If it's an equality condition (the most common case), use a hash join
+            let is_eq_join = if let Expression::BinaryOp { op, .. } = condition {
+                *op == AstOperator::Equals
+            } else {
+                false
+            };
             
-            // Choose between hash join and nested loop join based on join condition
-            // For now, use hash join for equi-joins and nested loop for others
-            // In a real system, this would be based on cost estimation
-            match condition {
-                Expression::BinaryOp { op, .. } if op.is_equality() => {
-                    // Use hash join for equality conditions (more efficient)
-                    PhysicalPlan::HashJoin {
-                        left: Box::new(physical_left),
-                        right: Box::new(physical_right),
-                        condition: condition.clone(),
-                        join_type: join_type.clone(),
-                    }
+            let left_plan = create_physical_plan(left);
+            let right_plan = create_physical_plan(right);
+            
+            if is_eq_join {
+                PhysicalPlan::HashJoin {
+                    left: Box::new(left_plan),
+                    right: Box::new(right_plan),
+                    condition: condition.clone(),
+                    join_type: join_type.clone(),
                 }
-                _ => {
-                    // Use nested loop join for other conditions
-                    PhysicalPlan::NestedLoopJoin {
-                        left: Box::new(physical_left),
-                        right: Box::new(physical_right),
-                        condition: condition.clone(),
-                        join_type: join_type.clone(),
-                    }
+            } else {
+                PhysicalPlan::NestedLoopJoin {
+                    left: Box::new(left_plan),
+                    right: Box::new(right_plan),
+                    condition: condition.clone(),
+                    join_type: join_type.clone(),
                 }
             }
         }
         LogicalPlan::Aggregate { input, group_by, aggregate_expressions, having } => {
-            // Convert the input to a physical plan
-            let physical_input = create_physical_plan(input);
-            
-            // Choose the best aggregation strategy based on the query characteristics
-            // For now, we always use HashAggregate as it's generally more efficient
-            // In a real system, we might choose sort-based aggregation for certain scenarios
-            
-            // Criteria that might favor sort-based aggregation:
-            // 1. Input is already sorted on the group-by keys
-            // 2. Very large number of groups that might not fit in memory
-            // 3. Result needs to be sorted by group-by keys
-            
-            // For this implementation, we'll use hash-based aggregation for all cases
-            // but in a real system this would be a cost-based decision
             PhysicalPlan::HashAggregate {
-                input: Box::new(physical_input),
+                input: Box::new(create_physical_plan(input)),
                 group_by: group_by.clone(),
                 aggregate_expressions: aggregate_expressions.clone(),
                 having: having.clone(),
             }
         }
+        LogicalPlan::CreateTable { table_name, columns } => {
+            PhysicalPlan::CreateTable {
+                table_name: table_name.clone(),
+                columns: columns.clone(),
+            }
+        }
     }
 }
 
-/// Build an executable operator tree from a physical plan
+/// Build a complete operator tree from a physical plan
 pub fn build_operator_tree(plan: &PhysicalPlan) -> QueryResult<Arc<Mutex<dyn Operator>>> {
     match plan {
         PhysicalPlan::SeqScan { table_name, .. } => {
-            // Create a table scan operator
             create_table_scan(table_name)
-        }
+        },
         PhysicalPlan::Filter { input, predicate } => {
+            // First build the input operator
             let input_op = build_operator_tree(input)?;
             
-            // Convert predicate expression to a string for the filter operator
-            // This is a simple implementation for now
+            // Then create the filter operator
             let predicate_str = expression_to_predicate(predicate);
             
-            // In a real implementation, we'd use the actual predicate expression
-            // to build a more sophisticated filter operator
-            let predicate_expr = predicate.clone();
+            // Extract table name from the predicate, or use a default
+            let table_name = match &**input {
+                PhysicalPlan::SeqScan { table_name, .. } => table_name.clone(),
+                _ => "default_table".to_string()
+            };
             
-            // Create the filter operator with the input and predicate
-            create_filter(input_op, predicate_expr, "default_table".to_string())
-        }
+            create_filter(input_op, predicate.clone(), table_name)
+        },
         PhysicalPlan::Project { input, columns } => {
             // First build the input operator
             let input_op = build_operator_tree(input)?;
             
-            // Then create the projection operator with the input
+            // Then create the projection operator
             create_projection(input_op, columns.clone())
-        }
-        PhysicalPlan::Materialize { input } => {
-            // For now, we'll just pass through to the input operator
-            // In a real system, you'd create a materializing operator
-            build_operator_tree(input)
-        }
+        },
         PhysicalPlan::NestedLoopJoin { left, right, condition, join_type } => {
-            // Build the left and right input operators
+            // Build the left and right operators
             let left_op = build_operator_tree(left)?;
             let right_op = build_operator_tree(right)?;
             
-            // Convert the condition to a string
+            // Convert the join condition to a string
             let condition_str = expression_to_predicate(condition);
             
-            // Determine if this is a left join
+            // Create the join operator
             let is_left_join = matches!(join_type, JoinType::LeftOuter);
-            
-            // Create the nested loop join operator
             create_nested_loop_join(left_op, right_op, condition_str, is_left_join)
-        }
+        },
         PhysicalPlan::HashJoin { left, right, condition, join_type } => {
-            // Build the left and right input operators
+            // Build the left and right operators
             let left_op = build_operator_tree(left)?;
             let right_op = build_operator_tree(right)?;
             
-            // Convert the condition to a string
+            // Convert the join condition to a string
             let condition_str = expression_to_predicate(condition);
-            
-            // Determine if this is a left join
-            let is_left_join = matches!(join_type, JoinType::LeftOuter);
             
             // Create the hash join operator
+            let is_left_join = matches!(join_type, JoinType::LeftOuter);
             create_hash_join(left_op, right_op, condition_str, is_left_join)
-        }
+        },
         PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
             // Build the input operator
             let input_op = build_operator_tree(input)?;
             
-            // Convert expressions to strings for now
-            // This is a simplified approach - in a real system, we'd have a more 
-            // sophisticated mechanism to evaluate expressions
+            // Convert the group by expressions to strings
+            let group_by_strs: Vec<String> = group_by.iter()
+                .map(expression_to_predicate)
+                .collect();
             
-            // Convert group_by expressions to strings - for modulo expressions, use aliases
-            let group_by_columns = group_by.iter()
-                .map(|expr| {
-                    match expr {
-                        // For binary op expressions like (id % 5), use a computed column name
-                        Expression::BinaryOp { left, op, right } if *op == AstOperator::Modulo => {
-                            if let (Expression::Column(col_ref), Expression::Literal(Value::Integer(val))) 
-                                = (&**left, &**right) {
-                                format!("{}_mod_{}", col_ref.name, val)
-                            } else {
-                                format!("{}", expression_to_predicate(expr))
-                            }
-                        },
-                        // For normal column references, use the column name
-                        Expression::Column(col_ref) => {
-                            col_ref.name.clone()
-                        },
-                        // For other expressions, convert to string
-                        _ => format!("{}", expression_to_predicate(expr))
-                    }
-                })
+            // Convert the aggregate expressions to strings
+            let agg_strs: Vec<String> = aggregate_expressions.iter()
+                .map(expression_to_predicate)
                 .collect();
-                
-            // Convert aggregate expressions to strings
-            let agg_expr_strings = aggregate_expressions.iter()
-                .map(|expr| format!("{}", expression_to_predicate(expr)))
-                .collect();
-                
-            // Convert having clause if present
-            let having_str = having.as_ref()
-                .map(|expr| format!("{}", expression_to_predicate(expr)));
-                
+            
+            // Convert the having clause to a string (if present)
+            let having_str = having.as_ref().map(expression_to_predicate);
+            
             // Create the hash aggregate operator
-            create_hash_aggregate(input_op, group_by_columns, agg_expr_strings, having_str)
+            create_hash_aggregate(input_op, group_by_strs, agg_strs, having_str)
+        },
+        PhysicalPlan::Materialize { input } => {
+            // For now, just return the input operator since materialization is handled
+            // in the operator implementations as needed
+            build_operator_tree(input)
+        },
+        PhysicalPlan::CreateTable { table_name, columns } => {
+            // For CREATE TABLE, we will handle this at a higher level in the execution engine
+            // Here we just create a dummy operator that will be replaced
+            let err_msg = format!("Create table operation for {} is handled by the execution engine", table_name);
+            Err(crate::query::executor::result::QueryError::ExecutionError(err_msg))
         }
     }
 }
 
-/// Add materialization hints to a physical plan where needed
+/// Add materialization nodes to the physical plan where needed
 pub fn add_materialization(plan: PhysicalPlan) -> PhysicalPlan {
     match plan {
-        PhysicalPlan::Project { input, columns } => {
-            // Add materialization if the input is not already materialized
-            // and is a complex operation that could benefit from materialization
-            let materialized_input = match *input {
-                PhysicalPlan::Filter { .. } => {
-                    // Filters with complex predicates might benefit from materialization
-                    Box::new(PhysicalPlan::Materialize {
-                        input: Box::new(add_materialization(*input)),
-                    })
-                }
-                _ => {
-                    // Otherwise just recursively process the input
-                    Box::new(add_materialization(*input))
-                }
-            };
-            
-            PhysicalPlan::Project {
-                input: materialized_input,
-                columns,
-            }
-        }
+        PhysicalPlan::SeqScan { .. } => plan,
         PhysicalPlan::Filter { input, predicate } => {
-            // Recursively process the input
             PhysicalPlan::Filter {
                 input: Box::new(add_materialization(*input)),
                 predicate,
             }
-        }
+        },
+        PhysicalPlan::Project { input, columns } => {
+            PhysicalPlan::Project {
+                input: Box::new(add_materialization(*input)),
+                columns,
+            }
+        },
+        PhysicalPlan::Materialize { .. } => plan,
         PhysicalPlan::NestedLoopJoin { left, right, condition, join_type } => {
-            // Add materialization to both sides of the join
+            // Nested loop joins benefit from materialization of the right side
+            // (which is scanned multiple times)
+            let new_right = Box::new(PhysicalPlan::Materialize {
+                input: Box::new(add_materialization(*right)),
+            });
+            
             PhysicalPlan::NestedLoopJoin {
                 left: Box::new(add_materialization(*left)),
-                right: Box::new(add_materialization(*right)),
+                right: new_right,
                 condition,
                 join_type,
             }
-        }
+        },
         PhysicalPlan::HashJoin { left, right, condition, join_type } => {
-            // Add materialization to both sides of the join
+            // Hash joins build a hash table from the left input
+            // Both inputs benefit from materialization in different ways
+            let new_left = Box::new(PhysicalPlan::Materialize {
+                input: Box::new(add_materialization(*left)),
+            });
+            
             PhysicalPlan::HashJoin {
-                left: Box::new(add_materialization(*left)),
+                left: new_left,
                 right: Box::new(add_materialization(*right)),
                 condition,
                 join_type,
             }
-        }
+        },
         PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
-            // Add materialization to the input
             PhysicalPlan::HashAggregate {
                 input: Box::new(add_materialization(*input)),
-                group_by: group_by.clone(),
-                aggregate_expressions: aggregate_expressions.clone(),
-                having: having.clone(),
+                group_by,
+                aggregate_expressions,
+                having,
+            }
+        },
+        PhysicalPlan::CreateTable { table_name, columns } => {
+            // CREATE TABLE doesn't need materialization
+            PhysicalPlan::CreateTable {
+                table_name,
+                columns,
             }
         }
-        // Base case - no materialization needed
-        _ => plan,
     }
 }
 
-/// Cost model for physical plans
-/// This is a simplified implementation - in a real system this would be more complex
+/// Simple cost model for query optimization
 pub struct CostModel;
 
 impl CostModel {
-    /// Calculate the estimated cost of a physical plan
+    /// Estimate the cost of a physical plan
     pub fn estimate_cost(plan: &PhysicalPlan) -> f64 {
         match plan {
             PhysicalPlan::SeqScan { .. } => {
-                // Assume sequential scan has a base cost of 100
-                100.0
+                // Sequential scans have a base cost proportional to the table size
+                // For now, assume all tables have 1000 rows as a placeholder
+                1000.0
             }
             PhysicalPlan::Filter { input, .. } => {
-                // Filters add some overhead plus the cost of the input
-                10.0 + Self::estimate_cost(input)
+                // Filter cost = input cost * selectivity factor
+                // Assume a default selectivity factor of 0.5 (50% of rows pass the filter)
+                let input_cost = Self::estimate_cost(input);
+                input_cost * 0.5
             }
             PhysicalPlan::Project { input, .. } => {
-                // Projections add minimal overhead
-                5.0 + Self::estimate_cost(input)
+                // Projection cost = input cost (projections don't reduce cardinality)
+                Self::estimate_cost(input)
             }
             PhysicalPlan::Materialize { input } => {
-                // Materialization is expensive but can save in repeated access
-                50.0 + Self::estimate_cost(input)
+                // Materialization adds a small overhead to the input cost
+                let input_cost = Self::estimate_cost(input);
+                input_cost * 1.1 // 10% overhead
             }
             PhysicalPlan::NestedLoopJoin { left, right, .. } => {
-                // Nested loop joins are very expensive - cost is product of inputs
-                Self::estimate_cost(left) * Self::estimate_cost(right)
+                // Nested loop join is expensive - O(n*m) where n and m are the sizes of the inputs
+                let left_cost = Self::estimate_cost(left);
+                let right_cost = Self::estimate_cost(right);
+                left_cost * right_cost
             }
             PhysicalPlan::HashJoin { left, right, .. } => {
-                // Hash joins are cheaper than nested loop - cost is sum plus overhead
-                75.0 + Self::estimate_cost(left) + Self::estimate_cost(right)
+                // Hash join is O(n+m) where n and m are the sizes of the inputs
+                let left_cost = Self::estimate_cost(left);
+                let right_cost = Self::estimate_cost(right);
+                left_cost + right_cost
             }
-            PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
-                // Base cost for hash table creation and management
-                let base_cost = 50.0;
-                
-                // Cost increases with number of group-by expressions (more complex key computation)
-                let group_by_cost = 10.0 * group_by.len() as f64;
-                
-                // Cost increases with number of aggregate expressions to compute
-                let agg_expr_cost = 5.0 * aggregate_expressions.len() as f64;
-                
-                // Additional cost if we have a HAVING clause (post-filtering)
-                let having_cost = if having.is_some() { 20.0 } else { 0.0 };
-                
-                // Total cost is base + group_by + agg_expr + having + input
-                base_cost + group_by_cost + agg_expr_cost + having_cost + Self::estimate_cost(input)
+            PhysicalPlan::HashAggregate { input, .. } => {
+                // Aggregation cost is proportional to the input size
+                let input_cost = Self::estimate_cost(input);
+                input_cost * 1.5
+            }
+            PhysicalPlan::CreateTable { .. } => {
+                // Create table operations have a fixed cost
+                1.0
             }
         }
     }
@@ -696,5 +671,53 @@ mod tests {
         } else {
             panic!("Expected Project as root operation");
         }
+    }
+    
+    #[test]
+    fn test_create_table_physical_plan() {
+        // Create a physical plan for a CREATE TABLE operation
+        let columns = vec![
+            ColumnDef {
+                name: "id".to_string(),
+                data_type: DataType::Integer,
+                nullable: false,
+                primary_key: true,
+            },
+            ColumnDef {
+                name: "name".to_string(),
+                data_type: DataType::Text,
+                nullable: false,
+                primary_key: false,
+            },
+            ColumnDef {
+                name: "email".to_string(),
+                data_type: DataType::Text,
+                nullable: true,
+                primary_key: false,
+            }
+        ];
+        
+        let create_table_plan = PhysicalPlan::CreateTable {
+            table_name: "users".to_string(),
+            columns,
+        };
+        
+        // Test converting to string
+        let plan_str = format!("{}", create_table_plan);
+        assert!(plan_str.contains("CreateTable"));
+        assert!(plan_str.contains("users"));
+        
+        // Test cost model
+        let cost = CostModel::estimate_cost(&create_table_plan);
+        assert_eq!(cost, 1.0); // Fixed cost for CREATE TABLE
+        
+        // Test materialization
+        let plan_with_mat = add_materialization(create_table_plan.clone());
+        assert!(matches!(plan_with_mat, PhysicalPlan::CreateTable { .. }));
+        
+        // The build_operator_tree should return an error for CREATE TABLE
+        // since this is handled at a higher level
+        let result = build_operator_tree(&create_table_plan);
+        assert!(result.is_err());
     }
 } 

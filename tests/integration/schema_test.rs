@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use bayundb::query::executor::engine::ExecutionEngine;
-use bayundb::query::parser::Parser;
+use bayundb::query::parser::parse;
 use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::catalog::{Catalog, DataType};
 use tempfile::NamedTempFile;
@@ -32,8 +32,7 @@ fn test_create_table() {
     )";
     
     // Parse and execute the statement
-    let mut parser = Parser::new(sql);
-    let statement = parser.parse_statement().unwrap();
+    let statement = parse(sql).unwrap();
     let _result = engine.execute(statement).unwrap();
     
     // Access the global catalog
@@ -69,4 +68,37 @@ fn test_create_table() {
     } else {
         panic!("Table 'employees' not found in catalog");
     }
+}
+
+#[test]
+fn test_simple_create_table() {
+    // Create a temporary database file
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path().to_str().unwrap().to_string();
+    
+    // Create buffer pool manager
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    
+    // Create execution engine
+    let engine = ExecutionEngine::new(buffer_pool);
+    
+    // Define a simpler CREATE TABLE statement
+    let sql = "CREATE TABLE users (id INTEGER, name TEXT)";
+    
+    // Parse and execute the statement
+    let statement = parse(sql).unwrap();
+    let result = engine.execute(statement).unwrap();
+    
+    // Just check that execution succeeded
+    assert_eq!(result.row_count(), 1);
+    
+    // Verify catalog contains the table
+    let catalog_instance = Catalog::instance();
+    let catalog = catalog_instance.read().unwrap();
+    
+    assert!(catalog.table_exists("users"));
+    
+    let table = catalog.get_table("users").unwrap();
+    assert_eq!(table.name(), "users");
+    assert_eq!(table.columns().len(), 2);
 } 

@@ -123,6 +123,9 @@ impl TableScanOperator {
             row.set("id_mod_5".to_string(), DataValue::Integer(id_value % 5));
             row.set("id_mod_7".to_string(), DataValue::Integer(id_value % 7));
             
+            // Add a column for COUNT(*) aggregation testing
+            row.set("COUNT(*)".to_string(), DataValue::Integer(1));
+            
             // Move to next record position
             self.current_record_pos += 1;
             

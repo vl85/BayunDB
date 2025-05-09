@@ -190,8 +190,8 @@ pub enum DataType {
 #[derive(Debug, Clone)]
 pub struct InsertStatement {
     pub table_name: String,
-    pub columns: Vec<String>,
-    pub values: Vec<Vec<Expression>>,
+    pub columns: Option<Vec<String>>,
+    pub values: Vec<Expression>,
 }
 
 /// UPDATE statement
