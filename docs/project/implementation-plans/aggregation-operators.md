@@ -35,16 +35,14 @@ This document outlines the implementation plan for adding aggregate operator sup
 - Add validation for group keys and aggregate functions
 - Handle column references in GROUP BY (validate non-aggregated columns)
 
-### Phase 3: Physical Planning (1 week) 🟡
+### Phase 3: Physical Planning (1 week) ✅
 - Implement HashAggregate operator
   - Group management with hash tables
   - Running aggregate calculation
-- Implement SortAggregate operator (optional)
-  - Sorting by group keys
-  - Sequential group processing
-- Add cost estimation for planner decisions
+- Implement cost estimation for planner decisions
+- Provide framework for choosing between hash and sort-based aggregation
 
-*Note: Basic structure for physical planning is in place, but execution operators are not yet implemented*
+*Note: Structure for physical planning is complete, with a placeholder HashAggregateOperator that will be filled with full implementation in Phase 4*
 
 ### Phase 4: Execution Engine (1 week) ⏳
 - Implement aggregate function calculations:
@@ -105,17 +103,19 @@ This document outlines the implementation plan for adding aggregate operator sup
 - ✅ Parser implementation is complete with tests
 - ✅ AST structure has been enhanced to support GROUP BY, HAVING, and aggregate functions
 - ✅ Logical planner has been updated to create Aggregate nodes
-- ✅ Physical planner structure for HashAggregate has been created
+- ✅ Physical planner has been updated to handle aggregation
+- ✅ Cost model enhanced to account for group-by complexity
+- ✅ Placeholder HashAggregateOperator has been created
 - ✅ Integration tests for parser features are passing
-- ⏳ Execution engine implementation is pending
-- ⏳ Full end-to-end query execution for aggregation is pending
+- ⏳ Full execution engine implementation for aggregation is pending
+- ⏳ End-to-end query execution for aggregation is pending
 
 ## Next Steps
 
-1. Implement the HashAggregateOperator in the execution engine
-2. Connect the physical plan nodes to the execution operators
-3. Update the build_operator_tree function to create proper aggregate operators
-4. Add performance testing for aggregation operations
+1. Complete the HashAggregateOperator implementation with grouping and aggregation logic
+2. Add support for HAVING clause evaluation in the execution engine
+3. Add performance testing for aggregation operations
+4. Refine cost model based on real benchmarks
 
 ## Dependencies
 

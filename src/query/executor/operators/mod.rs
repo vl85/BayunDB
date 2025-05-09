@@ -8,64 +8,7 @@ pub mod scan;
 pub mod filter;
 pub mod project;
 pub mod join;
-
-// Aggregation operators
-pub mod agg {
-    use std::sync::{Arc, Mutex};
-    use crate::query::executor::result::{Row, QueryResult};
-    use crate::query::executor::operators::Operator;
-    
-    /// Placeholder for HashAggregateOperator implementation
-    /// This will be implemented in a future update
-    pub struct HashAggregateOperator {
-        // Input operator
-        input: Arc<Mutex<dyn Operator>>,
-        // Group by columns (expressions)
-        group_by_columns: Vec<String>,
-        // Aggregate expressions
-        aggregate_expressions: Vec<String>,
-        // Having clause (optional)
-        having: Option<String>,
-    }
-    
-    impl Operator for HashAggregateOperator {
-        fn init(&mut self) -> QueryResult<()> {
-            // Initialize input operator
-            let mut input = self.input.lock().unwrap();
-            input.init()
-        }
-        
-        fn next(&mut self) -> QueryResult<Option<Row>> {
-            // Placeholder - just returns from input for now
-            let mut input = self.input.lock().unwrap();
-            input.next()
-        }
-        
-        fn close(&mut self) -> QueryResult<()> {
-            // Close input operator
-            let mut input = self.input.lock().unwrap();
-            input.close()
-        }
-    }
-    
-    // Factory function to create a hash aggregate operator
-    pub fn create_hash_aggregate(
-        input: Arc<Mutex<dyn Operator>>,
-        group_by_columns: Vec<String>,
-        aggregate_expressions: Vec<String>,
-        having: Option<String>
-    ) -> QueryResult<Arc<Mutex<dyn Operator>>> {
-        // Create and return the operator
-        let operator = HashAggregateOperator {
-            input,
-            group_by_columns,
-            aggregate_expressions,
-            having,
-        };
-        
-        Ok(Arc::new(Mutex::new(operator)))
-    }
-}
+pub mod agg;
 
 // Define the common Operator trait
 use crate::query::executor::result::{Row, QueryResult};

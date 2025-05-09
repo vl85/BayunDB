@@ -16,6 +16,7 @@ This document outlines the planned development steps for BayunDB, organized by c
    - Parser support for GROUP BY and HAVING clauses
    - Parser support for aggregate functions (COUNT, SUM, AVG, MIN, MAX)
    - Logical planning for aggregation
+   - Physical planning for aggregation
 
 2. **Performance Benchmarking**
    - Buffer pool performance benchmarks
@@ -71,7 +72,7 @@ This document outlines the planned development steps for BayunDB, organized by c
 1. **Aggregation Operators**
    - ✅ Parser support for GROUP BY, HAVING, and aggregate functions
    - ✅ Logical planning for aggregation
-   - ⏳ Physical operators for aggregation (HashAggregate)
+   - ✅ Physical planning for aggregation (HashAggregate)
    - ⏳ Execution engine implementation
    - See [aggregation-operators implementation plan](implementation-plans/aggregation-operators.md) for details
 

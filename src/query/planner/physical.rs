@@ -198,8 +198,17 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
             // Convert the input to a physical plan
             let physical_input = create_physical_plan(input);
             
-            // Create the hash aggregate operator
-            // For now, we always use hash aggregation (could also implement sort-based aggregation)
+            // Choose the best aggregation strategy based on the query characteristics
+            // For now, we always use HashAggregate as it's generally more efficient
+            // In a real system, we might choose sort-based aggregation for certain scenarios
+            
+            // Criteria that might favor sort-based aggregation:
+            // 1. Input is already sorted on the group-by keys
+            // 2. Very large number of groups that might not fit in memory
+            // 3. Result needs to be sorted by group-by keys
+            
+            // For this implementation, we'll use hash-based aggregation for all cases
+            // but in a real system this would be a cost-based decision
             PhysicalPlan::HashAggregate {
                 input: Box::new(physical_input),
                 group_by: group_by.clone(),
@@ -390,8 +399,20 @@ impl CostModel {
                 75.0 + Self::estimate_cost(left) + Self::estimate_cost(right)
             }
             PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
-                // Hash aggregation adds some overhead
-                100.0 + Self::estimate_cost(input)
+                // Base cost for hash table creation and management
+                let base_cost = 50.0;
+                
+                // Cost increases with number of group-by expressions (more complex key computation)
+                let group_by_cost = 10.0 * group_by.len() as f64;
+                
+                // Cost increases with number of aggregate expressions to compute
+                let agg_expr_cost = 5.0 * aggregate_expressions.len() as f64;
+                
+                // Additional cost if we have a HAVING clause (post-filtering)
+                let having_cost = if having.is_some() { 20.0 } else { 0.0 };
+                
+                // Total cost is base + group_by + agg_expr + having + input
+                base_cost + group_by_cost + agg_expr_cost + having_cost + Self::estimate_cost(input)
             }
         }
     }
