@@ -129,50 +129,27 @@ impl fmt::Display for PhysicalPlan {
     }
 }
 
-/// Convert an expression to a string predicate
-/// This is a simplified version for now - in a real system you'd have
-/// a predicate evaluator that can handle complex expressions
+/// Convert an expression to a string predicate for operators
 fn expression_to_predicate(expr: &Expression) -> String {
     match expr {
         Expression::Aggregate { function, arg } => {
-            match function {
-                AggregateFunction::Count => {
-                    if arg.is_none() {
-                        "COUNT(*)".to_string()
-                    } else if let Some(arg_expr) = arg {
-                        format!("COUNT({})", expression_to_predicate(arg_expr))
-                    } else {
-                        "COUNT(*)".to_string()
-                    }
-                },
-                AggregateFunction::Sum => {
-                    if let Some(arg_expr) = arg {
-                        format!("SUM({})", expression_to_predicate(arg_expr))
-                    } else {
-                        "SUM(*)".to_string() // This shouldn't happen, but just in case
-                    }
-                },
-                AggregateFunction::Avg => {
-                    if let Some(arg_expr) = arg {
-                        format!("AVG({})", expression_to_predicate(arg_expr))
-                    } else {
-                        "AVG(*)".to_string() // This shouldn't happen, but just in case
-                    }
-                },
-                AggregateFunction::Min => {
-                    if let Some(arg_expr) = arg {
-                        format!("MIN({})", expression_to_predicate(arg_expr))
-                    } else {
-                        "MIN(*)".to_string() // This shouldn't happen, but just in case
-                    }
-                },
-                AggregateFunction::Max => {
-                    if let Some(arg_expr) = arg {
-                        format!("MAX({})", expression_to_predicate(arg_expr))
-                    } else {
-                        "MAX(*)".to_string() // This shouldn't happen, but just in case
-                    }
-                },
+            let function_name = match function {
+                AggregateFunction::Count => "COUNT",
+                AggregateFunction::Sum => "SUM",
+                AggregateFunction::Avg => "AVG",
+                AggregateFunction::Min => "MIN",
+                AggregateFunction::Max => "MAX",
+            };
+            
+            if let Some(arg_expr) = arg {
+                match &**arg_expr {
+                    Expression::Column(col_ref) => {
+                        format!("{}({})", function_name, col_ref.name)
+                    },
+                    _ => format!("{}(?)", function_name),
+                }
+            } else {
+                format!("{}(*)", function_name)
             }
         },
         Expression::Column(col_ref) => {
@@ -200,7 +177,7 @@ fn expression_to_predicate(expr: &Expression) -> String {
                 AstOperator::Multiply => format!("{} * {}", left_str, right_str),
                 AstOperator::Divide => format!("{} / {}", left_str, right_str),
                 AstOperator::Modulo => format!("{} % {}", left_str, right_str),
-                _ => format!("{:?} {:?} {:?}", left, op, right),
+                AstOperator::Not => format!("NOT {}", right_str),
             }
         },
         Expression::Literal(value) => {
@@ -217,10 +194,9 @@ fn expression_to_predicate(expr: &Expression) -> String {
                 .map(|arg| expression_to_predicate(arg))
                 .collect::<Vec<_>>()
                 .join(", ");
-                
+            
             format!("{}({})", name, args_str)
         },
-        _ => format!("{:?}", expr), // Fallback for other cases
     }
 }
 
@@ -315,13 +291,18 @@ pub fn build_operator_tree(plan: &PhysicalPlan) -> QueryResult<Arc<Mutex<dyn Ope
             create_table_scan(table_name)
         }
         PhysicalPlan::Filter { input, predicate } => {
-            // First build the input operator
             let input_op = build_operator_tree(input)?;
             
-            // Then create the filter operator with the input
-            // We convert the expression to a string predicate for simplicity
+            // Convert predicate expression to a string for the filter operator
+            // This is a simple implementation for now
             let predicate_str = expression_to_predicate(predicate);
-            create_filter(input_op, predicate_str)
+            
+            // In a real implementation, we'd use the actual predicate expression
+            // to build a more sophisticated filter operator
+            let predicate_expr = predicate.clone();
+            
+            // Create the filter operator with the input and predicate
+            create_filter(input_op, predicate_expr, "default_table".to_string())
         }
         PhysicalPlan::Project { input, columns } => {
             // First build the input operator

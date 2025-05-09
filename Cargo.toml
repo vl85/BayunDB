@@ -75,6 +75,14 @@ path = "tests/integration/aggregation_test.rs"
 name = "schema_test"
 path = "tests/integration/schema_test.rs"
 
+[[test]]
+name = "validation_test"
+path = "tests/integration/validation_test.rs"
+
+[[example]]
+name = "debug_validation"
+path = "examples/debug_validation.rs"
+
 [dependencies]
 thiserror = "1.0"
 anyhow = "1.0"

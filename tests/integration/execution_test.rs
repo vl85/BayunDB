@@ -8,6 +8,7 @@ use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::storage::page::PageManager;
 use bayundb::index::btree::BTreeIndex;
 use bayundb::transaction::LogManager;
+use bayundb::query::parser::ast::{Expression, ColumnReference, Operator, Value};
 
 /// Test to verify actual result rows from query execution with filter
 #[test]
@@ -23,7 +24,15 @@ fn test_result_rows() -> Result<()> {
     
     // Create a filter with a predicate in the format the filter operator understands
     // The filter operator expects "column operator value" format
-    let filter_op = create_filter(scan_op, "id < 10".to_string())
+    let predicate_expr = Expression::BinaryOp {
+        left: Box::new(Expression::Column(ColumnReference {
+            table: None,
+            name: "id".to_string(),
+        })),
+        op: Operator::LessThan,
+        right: Box::new(Expression::Literal(Value::Integer(10))),
+    };
+    let filter_op = create_filter(scan_op, predicate_expr, "test_table".to_string())
         .map_err(|e| anyhow!("Failed to create filter operator: {:?}", e))?;
     
     // Initialize the operator
@@ -101,7 +110,15 @@ fn test_different_filter_condition() -> Result<()> {
         .map_err(|e| anyhow!("Failed to create scan operator: {:?}", e))?;
     
     // Create a filter with a different condition
-    let filter_op = create_filter(scan_op, "id > 15".to_string())
+    let predicate_expr = Expression::BinaryOp {
+        left: Box::new(Expression::Column(ColumnReference {
+            table: None,
+            name: "id".to_string(),
+        })),
+        op: Operator::GreaterThan,
+        right: Box::new(Expression::Literal(Value::Integer(15))),
+    };
+    let filter_op = create_filter(scan_op, predicate_expr, "test_table".to_string())
         .map_err(|e| anyhow!("Failed to create filter operator: {:?}", e))?;
     
     // Initialize the operator

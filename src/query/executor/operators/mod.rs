@@ -13,6 +13,7 @@ pub mod agg;
 // Define the common Operator trait
 use crate::query::executor::result::{Row, QueryResult};
 use std::sync::{Arc, Mutex};
+use crate::query::parser::ast::Expression;
 
 /// The Operator trait defines the interface for all query execution operators
 /// in the iterator-based execution model. Each operator processes tuples and
@@ -33,8 +34,14 @@ pub fn create_table_scan(table_name: &str) -> QueryResult<Arc<Mutex<dyn Operator
     scan::create_table_scan(table_name)
 }
 
-pub fn create_filter(input: Arc<Mutex<dyn Operator>>, predicate: String) -> QueryResult<Arc<Mutex<dyn Operator>>> {
-    filter::create_filter(input, predicate)
+/// Create a filter operator that filters rows based on a predicate expression
+pub fn create_filter(
+    input: Arc<Mutex<dyn Operator + Send>>, 
+    predicate: Expression,
+    table_name: String
+) -> QueryResult<Arc<Mutex<dyn Operator>>> {
+    let filter = filter::FilterOperator::new(input, predicate, table_name);
+    Ok(Arc::new(Mutex::new(filter)))
 }
 
 pub fn create_projection(input: Arc<Mutex<dyn Operator>>, columns: Vec<String>) -> QueryResult<Arc<Mutex<dyn Operator>>> {

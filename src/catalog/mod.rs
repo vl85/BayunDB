@@ -6,12 +6,14 @@
 pub mod schema;
 pub mod table;
 pub mod column;
+pub mod validation;
 
 // Re-export key types
 pub use self::schema::Schema;
 pub use self::table::Table;
 pub use self::column::Column;
 pub use self::schema::DataType;
+pub use self::validation::{TypeValidator, ValidationError, ValidationResult};
 
 use std::sync::{Arc, RwLock};
 use std::collections::HashMap;

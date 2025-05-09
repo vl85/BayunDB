@@ -1,191 +1,252 @@
-// Filter Operator Implementation
+// Filter Operator
 //
-// This module implements the filter operator for filtering rows based on predicates.
+// Filters rows from the input operator based on a predicate.
 
 use std::sync::{Arc, Mutex};
-
+use crate::query::executor::result::{Row, QueryResult, DataValue, QueryError};
 use crate::query::executor::operators::Operator;
-use crate::query::executor::result::{Row, QueryResult, QueryError, DataValue};
+use crate::catalog::TypeValidator;
+use crate::query::parser::ast::{Expression, Operator as AstOperator, Value};
 
-/// Filter operator that filters rows based on a predicate
+/// Filter operator
 pub struct FilterOperator {
-    /// The input operator
-    input: Arc<Mutex<dyn Operator>>,
-    /// The predicate to evaluate
-    predicate: String, // For now, we'll use a simple string representation
+    /// Input operator
+    input: Arc<Mutex<dyn Operator + Send>>,
+    /// Predicate expression
+    expression: Expression,
+    /// Table name for column resolution
+    table_name: String,
     /// Whether the operator is initialized
     initialized: bool,
 }
 
 impl FilterOperator {
     /// Create a new filter operator
-    pub fn new(input: Arc<Mutex<dyn Operator>>, predicate: String) -> Self {
+    pub fn new(
+        input: Arc<Mutex<dyn Operator + Send>>,
+        expression: Expression,
+        table_name: String,
+    ) -> Self {
         FilterOperator {
             input,
-            predicate,
+            expression,
+            table_name,
             initialized: false,
         }
     }
     
-    /// Evaluate a simple predicate on a row
-    /// 
-    /// This is a simplified implementation for demonstration purposes.
-    /// In a real database, you would have a proper expression evaluator.
-    fn evaluate_predicate(&self, row: &Row) -> QueryResult<bool> {
-        // For now, we'll implement a very simple predicate evaluator
-        // that can handle basic column comparisons with constants
-        
-        // Example predicate format: "column > value"
-        let parts: Vec<&str> = self.predicate.split_whitespace().collect();
-        
-        // Check if we have a simple binary comparison
-        if parts.len() == 3 {
-            let column_name = parts[0];
-            let operator = parts[1];
-            let value_str = parts[2];
+    /// Evaluate an expression against a row
+    fn evaluate_expression(&self, expr: &Expression, row: &Row) -> QueryResult<DataValue> {
+        match expr {
+            Expression::Literal(value) => {
+                let data_value = TypeValidator::convert_value(value);
+                Ok(data_value)
+            },
             
-            // Get the column value from the row
-            let column_value = match row.get(column_name) {
-                Some(value) => value,
-                None => return Err(QueryError::ColumnNotFound(column_name.to_string())),
-            };
+            Expression::Column(col_ref) => {
+                let column_name = &col_ref.name;
+                let value = row.get(column_name)
+                    .ok_or_else(|| QueryError::ColumnNotFound(column_name.clone()))?;
+                
+                Ok(value.clone())
+            },
             
-            // Parse the constant value
-            let constant_value = Self::parse_value(value_str)?;
+            Expression::BinaryOp { left, op, right } => {
+                let left_value = self.evaluate_expression(left, row)?;
+                let right_value = self.evaluate_expression(right, row)?;
+                
+                match op {
+                    // Comparison operators
+                    AstOperator::Equals => Ok(DataValue::Boolean(left_value == right_value)),
+                    AstOperator::NotEquals => Ok(DataValue::Boolean(left_value != right_value)),
+                    
+                    AstOperator::LessThan => {
+                        match left_value.partial_cmp(&right_value) {
+                            Some(std::cmp::Ordering::Less) => Ok(DataValue::Boolean(true)),
+                            Some(_) => Ok(DataValue::Boolean(false)),
+                            None => Err(QueryError::ExecutionError(format!(
+                                "Cannot compare {:?} < {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    AstOperator::GreaterThan => {
+                        match left_value.partial_cmp(&right_value) {
+                            Some(std::cmp::Ordering::Greater) => Ok(DataValue::Boolean(true)),
+                            Some(_) => Ok(DataValue::Boolean(false)),
+                            None => Err(QueryError::ExecutionError(format!(
+                                "Cannot compare {:?} > {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    AstOperator::LessEquals => {
+                        match left_value.partial_cmp(&right_value) {
+                            Some(ord) => Ok(DataValue::Boolean(ord != std::cmp::Ordering::Greater)),
+                            None => Err(QueryError::ExecutionError(format!(
+                                "Cannot compare {:?} <= {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    AstOperator::GreaterEquals => {
+                        match left_value.partial_cmp(&right_value) {
+                            Some(ord) => Ok(DataValue::Boolean(ord != std::cmp::Ordering::Less)),
+                            None => Err(QueryError::ExecutionError(format!(
+                                "Cannot compare {:?} >= {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    // Logical operators
+                    AstOperator::And => {
+                        match (left_value, right_value) {
+                            (DataValue::Boolean(l), DataValue::Boolean(r)) => Ok(DataValue::Boolean(l && r)),
+                            _ => Err(QueryError::ExecutionError("AND requires boolean operands".to_string())),
+                        }
+                    },
+                    
+                    AstOperator::Or => {
+                        match (left_value, right_value) {
+                            (DataValue::Boolean(l), DataValue::Boolean(r)) => Ok(DataValue::Boolean(l || r)),
+                            _ => Err(QueryError::ExecutionError("OR requires boolean operands".to_string())),
+                        }
+                    },
+                    
+                    // Arithmetic operators
+                    AstOperator::Plus => {
+                        match (&left_value, &right_value) {
+                            (DataValue::Integer(l), DataValue::Integer(r)) => Ok(DataValue::Integer(l + r)),
+                            (DataValue::Integer(l), DataValue::Float(r)) => Ok(DataValue::Float(*l as f64 + r)),
+                            (DataValue::Float(l), DataValue::Integer(r)) => Ok(DataValue::Float(l + *r as f64)),
+                            (DataValue::Float(l), DataValue::Float(r)) => Ok(DataValue::Float(l + r)),
+                            (DataValue::Text(l), DataValue::Text(r)) => Ok(DataValue::Text(l.clone() + r)),
+                            _ => Err(QueryError::ExecutionError(format!(
+                                "Cannot add {:?} and {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    AstOperator::Minus => {
+                        match (&left_value, &right_value) {
+                            (DataValue::Integer(l), DataValue::Integer(r)) => Ok(DataValue::Integer(l - r)),
+                            (DataValue::Integer(l), DataValue::Float(r)) => Ok(DataValue::Float(*l as f64 - r)),
+                            (DataValue::Float(l), DataValue::Integer(r)) => Ok(DataValue::Float(l - *r as f64)),
+                            (DataValue::Float(l), DataValue::Float(r)) => Ok(DataValue::Float(l - r)),
+                            _ => Err(QueryError::ExecutionError(format!(
+                                "Cannot subtract {:?} from {:?}", right_value, left_value
+                            ))),
+                        }
+                    },
+                    
+                    AstOperator::Multiply => {
+                        match (&left_value, &right_value) {
+                            (DataValue::Integer(l), DataValue::Integer(r)) => Ok(DataValue::Integer(l * r)),
+                            (DataValue::Integer(l), DataValue::Float(r)) => Ok(DataValue::Float(*l as f64 * r)),
+                            (DataValue::Float(l), DataValue::Integer(r)) => Ok(DataValue::Float(l * *r as f64)),
+                            (DataValue::Float(l), DataValue::Float(r)) => Ok(DataValue::Float(l * r)),
+                            _ => Err(QueryError::ExecutionError(format!(
+                                "Cannot multiply {:?} by {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    AstOperator::Divide => {
+                        match (&left_value, &right_value) {
+                            (_, DataValue::Integer(r)) if *r == 0 => {
+                                Err(QueryError::ExecutionError("Division by zero".to_string()))
+                            },
+                            (_, DataValue::Float(r)) if *r == 0.0 => {
+                                Err(QueryError::ExecutionError("Division by zero".to_string()))
+                            },
+                            (DataValue::Integer(l), DataValue::Integer(r)) => Ok(DataValue::Float(*l as f64 / *r as f64)),
+                            (DataValue::Integer(l), DataValue::Float(r)) => Ok(DataValue::Float(*l as f64 / r)),
+                            (DataValue::Float(l), DataValue::Integer(r)) => Ok(DataValue::Float(l / *r as f64)),
+                            (DataValue::Float(l), DataValue::Float(r)) => Ok(DataValue::Float(l / r)),
+                            _ => Err(QueryError::ExecutionError(format!(
+                                "Cannot divide {:?} by {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    AstOperator::Modulo => {
+                        match (&left_value, &right_value) {
+                            (_, DataValue::Integer(r)) if *r == 0 => {
+                                Err(QueryError::ExecutionError("Modulo by zero".to_string()))
+                            },
+                            (_, DataValue::Float(r)) if *r == 0.0 => {
+                                Err(QueryError::ExecutionError("Modulo by zero".to_string()))
+                            },
+                            (DataValue::Integer(l), DataValue::Integer(r)) => Ok(DataValue::Integer(l % r)),
+                            (DataValue::Integer(l), DataValue::Float(r)) => Ok(DataValue::Float(*l as f64 % r)),
+                            (DataValue::Float(l), DataValue::Integer(r)) => Ok(DataValue::Float(l % *r as f64)),
+                            (DataValue::Float(l), DataValue::Float(r)) => Ok(DataValue::Float(l % r)),
+                            _ => Err(QueryError::ExecutionError(format!(
+                                "Cannot compute modulo of {:?} by {:?}", left_value, right_value
+                            ))),
+                        }
+                    },
+                    
+                    // Unary operations would be handled differently
+                    AstOperator::Not => {
+                        Err(QueryError::ExecutionError("NOT operator should be handled separately".to_string()))
+                    },
+                }
+            },
             
-            // Compare based on the operator
-            match operator {
-                "=" => Ok(column_value == &constant_value),
-                ">" => Ok(self.compare_greater_than(column_value, &constant_value)),
-                "<" => Ok(self.compare_less_than(column_value, &constant_value)),
-                ">=" => Ok(self.compare_greater_equal(column_value, &constant_value)),
-                "<=" => Ok(self.compare_less_equal(column_value, &constant_value)),
-                "!=" => Ok(column_value != &constant_value),
-                _ => Err(QueryError::ExecutionError(format!("Unsupported operator: {}", operator))),
-            }
-        } else {
-            // For now, just accept everything if we can't understand the predicate
-            // This is a simplification for this implementation
-            Ok(true)
+            // Add other expression types as needed
+            _ => Err(QueryError::ExecutionError(format!("Unsupported expression: {:?}", expr))),
         }
-    }
-    
-    /// Compare if a is greater than b, handling partial_cmp() correctly
-    fn compare_greater_than(&self, a: &DataValue, b: &DataValue) -> bool {
-        match a.partial_cmp(b) {
-            Some(std::cmp::Ordering::Greater) => true,
-            _ => false,
-        }
-    }
-    
-    /// Compare if a is less than b, handling partial_cmp() correctly
-    fn compare_less_than(&self, a: &DataValue, b: &DataValue) -> bool {
-        match a.partial_cmp(b) {
-            Some(std::cmp::Ordering::Less) => true,
-            _ => false,
-        }
-    }
-    
-    /// Compare if a is greater than or equal to b, handling partial_cmp() correctly
-    fn compare_greater_equal(&self, a: &DataValue, b: &DataValue) -> bool {
-        match a.partial_cmp(b) {
-            Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal) => true,
-            _ => false,
-        }
-    }
-    
-    /// Compare if a is less than or equal to b, handling partial_cmp() correctly
-    fn compare_less_equal(&self, a: &DataValue, b: &DataValue) -> bool {
-        match a.partial_cmp(b) {
-            Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal) => true,
-            _ => false,
-        }
-    }
-    
-    /// Parse a string value into a DataValue
-    fn parse_value(value_str: &str) -> QueryResult<DataValue> {
-        // Try parsing as integer
-        if let Ok(i) = value_str.parse::<i64>() {
-            return Ok(DataValue::Integer(i));
-        }
-        
-        // Try parsing as float
-        if let Ok(f) = value_str.parse::<f64>() {
-            return Ok(DataValue::Float(f));
-        }
-        
-        // Handle string literals (quoted)
-        if value_str.starts_with('"') && value_str.ends_with('"') {
-            let s = value_str[1..value_str.len() - 1].to_string();
-            return Ok(DataValue::Text(s));
-        }
-        
-        // Handle boolean literals
-        match value_str.to_lowercase().as_str() {
-            "true" => return Ok(DataValue::Boolean(true)),
-            "false" => return Ok(DataValue::Boolean(false)),
-            "null" => return Ok(DataValue::Null),
-            _ => {}
-        }
-        
-        // Default to text
-        Ok(DataValue::Text(value_str.to_string()))
     }
 }
 
 impl Operator for FilterOperator {
-    /// Initialize the operator
     fn init(&mut self) -> QueryResult<()> {
         // Initialize the input operator
-        {
-            let mut input = self.input.lock().map_err(|e| {
-                QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
-            })?;
-            
-            input.init()?;
-        }
+        let mut input = self.input.lock().map_err(|e| {
+            QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
+        })?;
         
+        input.init()?;
         self.initialized = true;
         Ok(())
     }
     
-    /// Get the next row that satisfies the predicate
     fn next(&mut self) -> QueryResult<Option<Row>> {
         if !self.initialized {
             return Err(QueryError::ExecutionError("Operator not initialized".to_string()));
         }
         
-        // Keep fetching rows from the input operator until we find one that
-        // satisfies the predicate or we run out of rows
+        // Find the next row that satisfies the predicate
         loop {
-            // Get the next row from the input
-            let next_row = {
-                let mut input = self.input.lock().map_err(|e| {
-                    QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
-                })?;
-                
-                input.next()?
-            };
+            let mut input = self.input.lock().map_err(|e| {
+                QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
+            })?;
             
-            // If we've run out of rows, return None
-            match next_row {
-                None => return Ok(None),
+            let row_option = input.next()?;
+            std::mem::drop(input);
+            
+            match row_option {
                 Some(row) => {
-                    // Check if this row satisfies the predicate
-                    if self.evaluate_predicate(&row)? {
-                        return Ok(Some(row));
+                    // Evaluate predicate expression for the row
+                    let result = self.evaluate_expression(&self.expression, &row)?;
+                    
+                    // Check if the result is a boolean true
+                    match result {
+                        DataValue::Boolean(true) => return Ok(Some(row)),
+                        DataValue::Boolean(false) => continue, // Skip this row
+                        _ => return Err(QueryError::ExecutionError(
+                            format!("Predicate evaluation must return a boolean, got: {:?}", result)
+                        )),
                     }
-                    // Otherwise continue to the next row
-                }
+                },
+                None => return Ok(None), // No more rows
             }
         }
     }
     
-    /// Close the operator
     fn close(&mut self) -> QueryResult<()> {
         self.initialized = false;
-        
-        // Close the input operator
         let mut input = self.input.lock().map_err(|e| {
             QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
         })?;
@@ -194,105 +255,142 @@ impl Operator for FilterOperator {
     }
 }
 
-/// Create a filter operator
-pub fn create_filter(input: Arc<Mutex<dyn Operator>>, predicate: String) -> QueryResult<Arc<Mutex<dyn Operator>>> {
-    let filter = FilterOperator::new(input, predicate);
-    Ok(Arc::new(Mutex::new(filter)))
+// Implement a DummyOperator for tests
+#[cfg(test)]
+pub struct DummyOperator {
+    rows: Vec<Row>,
+    index: usize,
+    initialized: bool,
+}
+
+#[cfg(test)]
+impl DummyOperator {
+    pub fn new(rows: Vec<Row>) -> Self {
+        DummyOperator {
+            rows,
+            index: 0,
+            initialized: false,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Operator for DummyOperator {
+    fn init(&mut self) -> QueryResult<()> {
+        self.index = 0;
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn next(&mut self) -> QueryResult<Option<Row>> {
+        if !self.initialized {
+            return Err(QueryError::ExecutionError("Operator not initialized".to_string()));
+        }
+        
+        if self.index < self.rows.len() {
+            let row = self.rows[self.index].clone();
+            self.index += 1;
+            Ok(Some(row))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    fn close(&mut self) -> QueryResult<()> {
+        self.initialized = false;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::executor::result::DataValue;
+    use crate::query::parser::ast::{ColumnReference, Operator as AstOperator};
     
-    // Mock operator for testing
-    struct MockOperator {
-        rows: Vec<Row>,
-        index: usize,
-        initialized: bool,
-    }
-    
-    impl MockOperator {
-        fn new(rows: Vec<Row>) -> Self {
-            MockOperator {
-                rows,
-                index: 0,
-                initialized: false,
-            }
-        }
-    }
-    
-    impl Operator for MockOperator {
-        fn init(&mut self) -> QueryResult<()> {
-            self.index = 0;
-            self.initialized = true;
-            Ok(())
-        }
+    #[test]
+    fn test_filter_operation() {
+        // Create test data
+        let mut rows = Vec::new();
         
-        fn next(&mut self) -> QueryResult<Option<Row>> {
-            if !self.initialized {
-                return Err(QueryError::ExecutionError("Operator not initialized".to_string()));
-            }
-            
-            if self.index < self.rows.len() {
-                let row = self.rows[self.index].clone();
-                self.index += 1;
-                Ok(Some(row))
-            } else {
-                Ok(None)
-            }
-        }
+        let mut row1 = Row::new();
+        row1.set("id".to_string(), DataValue::Integer(1));
+        row1.set("value".to_string(), DataValue::Integer(10));
+        rows.push(row1);
         
-        fn close(&mut self) -> QueryResult<()> {
-            self.initialized = false;
-            Ok(())
-        }
-    }
-    
-    // Helper function to create a test row
-    fn create_test_row(id: i64, name: &str, age: i64) -> Row {
-        let mut row = Row::new();
-        row.set("id".to_string(), DataValue::Integer(id));
-        row.set("name".to_string(), DataValue::Text(name.to_string()));
-        row.set("age".to_string(), DataValue::Integer(age));
-        row
+        let mut row2 = Row::new();
+        row2.set("id".to_string(), DataValue::Integer(2));
+        row2.set("value".to_string(), DataValue::Integer(20));
+        rows.push(row2);
+        
+        let mut row3 = Row::new();
+        row3.set("id".to_string(), DataValue::Integer(3));
+        row3.set("value".to_string(), DataValue::Integer(30));
+        rows.push(row3);
+        
+        // Create dummy operator that will return our test data
+        let dummy = Arc::new(Mutex::new(DummyOperator::new(rows)));
+        
+        // Create a filter expression: value > 15
+        let expression = Expression::BinaryOp {
+            left: Box::new(Expression::Column(ColumnReference {
+                table: None,
+                name: "value".to_string(),
+            })),
+            op: AstOperator::GreaterThan,
+            right: Box::new(Expression::Literal(Value::Integer(15))),
+        };
+        
+        // Create filter operator
+        let mut filter = FilterOperator::new(dummy, expression, "test_table".to_string());
+        
+        // Initialize the filter
+        filter.init().unwrap();
+        
+        // Get the first row (should be row2)
+        let result = filter.next().unwrap().unwrap();
+        assert_eq!(result.get("id"), Some(&DataValue::Integer(2)));
+        
+        // Get the second row (should be row3)
+        let result = filter.next().unwrap().unwrap();
+        assert_eq!(result.get("id"), Some(&DataValue::Integer(3)));
+        
+        // There should be no more rows
+        assert!(filter.next().unwrap().is_none());
     }
     
     #[test]
-    fn test_filter_operator() {
+    fn test_type_compatibility() {
         // Create test data
-        let rows = vec![
-            create_test_row(1, "Alice", 25),
-            create_test_row(2, "Bob", 30),
-            create_test_row(3, "Charlie", 35),
-            create_test_row(4, "Dave", 40),
-        ];
+        let mut rows = Vec::new();
         
-        // Create a mock operator
-        let mock_op = MockOperator::new(rows);
-        let mock_op_arc = Arc::new(Mutex::new(mock_op));
+        let mut row1 = Row::new();
+        row1.set("id".to_string(), DataValue::Integer(1));
+        row1.set("name".to_string(), DataValue::Text("Test".to_string()));
+        rows.push(row1);
         
-        // Create a filter operator with a predicate
-        let predicate = "age > 30".to_string();
-        let mut filter_op = FilterOperator::new(mock_op_arc, predicate);
+        // Create dummy operator that will return our test data
+        let dummy = Arc::new(Mutex::new(DummyOperator::new(rows)));
         
-        // Initialize and test
-        filter_op.init().unwrap();
+        // Create an invalid filter expression: id + name
+        let expression = Expression::BinaryOp {
+            left: Box::new(Expression::Column(ColumnReference {
+                table: None,
+                name: "id".to_string(),
+            })),
+            op: AstOperator::Plus,
+            right: Box::new(Expression::Column(ColumnReference {
+                table: None,
+                name: "name".to_string(),
+            })),
+        };
         
-        // First row should be Charlie (age 35)
-        let row1 = filter_op.next().unwrap().unwrap();
-        assert_eq!(row1.get("name"), Some(&DataValue::Text("Charlie".to_string())));
-        assert_eq!(row1.get("age"), Some(&DataValue::Integer(35)));
+        // Create filter operator
+        let mut filter = FilterOperator::new(dummy, expression, "test_table".to_string());
         
-        // Second row should be Dave (age 40)
-        let row2 = filter_op.next().unwrap().unwrap();
-        assert_eq!(row2.get("name"), Some(&DataValue::Text("Dave".to_string())));
-        assert_eq!(row2.get("age"), Some(&DataValue::Integer(40)));
+        // Initialize the filter
+        filter.init().unwrap();
         
-        // No more rows
-        assert!(filter_op.next().unwrap().is_none());
-        
-        // Close the operator
-        filter_op.close().unwrap();
+        // This should fail with a type error
+        assert!(filter.next().is_err());
     }
 } 
