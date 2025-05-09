@@ -79,8 +79,8 @@ Given the complexity of the TokenType and AST structure differences, we should a
 - Phase 1: ✅ Completed
 - Phase 2: ✅ Completed
 - Phase 3: ✅ Completed
-- Phase 4: ⬜ Not Started
-- Phase 5: ⬜ Not Started
+- Phase 4: ✅ Completed
+- Phase 5: ✅ Completed
 
 ## Implementation Progress
 
@@ -108,11 +108,32 @@ Given the complexity of the TokenType and AST structure differences, we should a
    - Added comprehensive tests for all expression types
    - Verified that all project tests still pass
 
-4. **Next Steps**:
-   - Implement SELECT statement parsing in `parser_select.rs`
-   - Implement DDL statement parsing in `parser_ddl.rs`
-   - Implement DML statement parsing in `parser_dml.rs`
-   - Update the main parser to use these components
+4. **Statement Parsers Implementation (Completed)**:
+   - Implemented SELECT statement parsing in `parser_select.rs`
+     - Support for column selection and aliasing
+     - WHERE clause filtering
+     - JOIN operations (INNER, LEFT, RIGHT)
+     - GROUP BY clauses
+     - HAVING clauses
+   - Implemented DDL statement parsing in `parser_ddl.rs`
+     - CREATE TABLE statements with column definitions
+     - Data type parsing
+     - Constraint parsing (PRIMARY KEY, NOT NULL)
+     - Placeholder implementations for DROP and ALTER
+   - Implemented DML statement parsing in `parser_dml.rs`
+     - INSERT statements with VALUES
+     - UPDATE statements with SET clause
+     - DELETE statements with WHERE clause
+   - Added tests for each statement type
+
+5. **Integration (Completed)**:
+   - Updated the main parser.rs to use component modules
+   - Updated benchmarks to use the new parsing interface
+   - Verified that all tests pass
+   - Verified that all benchmarks compile and run
+   - Removed redundant code
+
+The SQL Parser restructuring is now complete. The modular approach allows easier maintenance and extension of SQL syntax in the future.
 
 ### 2. WAL Log Manager (`src/transaction/wal/log_manager.rs`)
 
@@ -173,6 +194,34 @@ Given the complexity of the TokenType and AST structure differences, we should a
 3. Move expression validation to `expression_validator.rs`
 4. Keep core row/column validation in `type_validator.rs`
 
+## Testing Improvements
+
+### Recovery Test Enhancement
+
+**Current Issues:**
+- Debug utilities have been removed (`validation_debug.rs`, `recovery_debug.rs`, etc.)
+- Existing test infrastructure didn't properly verify recovery with checkpoints
+- Lack of proper verification for checkpoint-based recovery
+
+**Implemented Improvements:**
+- Enhanced `test_recovery_with_checkpoint` in `tests/integration/recovery_test.rs`:
+  - Added proper page initialization and record insertion
+  - Implemented actual verification of recovered data
+  - Ensured both pre-checkpoint and post-checkpoint data is tested
+  - Added clear phases in the test for better maintainability:
+    1. Generate and insert data before checkpoint
+    2. Create a checkpoint
+    3. Generate and insert data after checkpoint
+    4. Simulate a system crash
+    5. Perform recovery
+    6. Verify that all data (pre and post checkpoint) is correctly recovered
+
+**Impact:**
+- Ensures the WAL and recovery mechanism properly handles checkpoints
+- Verifies that both data written before and after a checkpoint is properly recovered
+- Provides a foundation for further recovery testing without debug utilities
+- Demonstrates the checkpoint optimization works correctly for reducing recovery time
+
 ## General Restructuring Principles
 
 1. **Single Responsibility**: Each file should handle one coherent aspect of functionality
@@ -180,6 +229,7 @@ Given the complexity of the TokenType and AST structure differences, we should a
 3. **Clear Module Structure**: Use Rust's module system to organize related components
 4. **Consistent Naming**: Use a consistent naming scheme for related files
 5. **Incremental Changes**: Restructure one module at a time, ensuring tests pass
+6. **Thorough Testing**: Ensure comprehensive test coverage, especially for critical components
 
 ## Implementation Priority
 
@@ -187,6 +237,7 @@ Given the complexity of the TokenType and AST structure differences, we should a
 2. WAL Log Manager - Critical for database integrity
 3. Physical Query Planner - Key for query performance
 4. Type Validation - Important for data integrity
+5. Recovery and Checkpoint Testing - Essential for ensuring data durability
 
 ## Testing Strategy
 
@@ -195,6 +246,7 @@ For each restructuring:
 2. Ensure each moved component has appropriate unit tests
 3. Run integration tests to verify overall functionality
 4. Check for regressions in performance
+5. For critical functionality like recovery, implement thorough verification tests
 
 ## Timeline
 
@@ -204,7 +256,8 @@ Estimated time:
 - WAL Log Manager: 2 days
 - Physical Query Planner: 1-2 days
 - Type Validation: 1 day
+- Recovery Test Enhancement: 1 day
 
 ## Conclusion
 
-This restructuring will significantly improve code maintainability and make it easier to extend the database's functionality in the future. We'll approach this methodically, ensuring each step maintains the integrity and functionality of the system. 
+This restructuring will significantly improve code maintainability and make it easier to extend the database's functionality in the future. We'll approach this methodically, ensuring each step maintains the integrity and functionality of the system. The improved test coverage, especially for critical components like the recovery system, will ensure the database remains reliable as we continue development. 

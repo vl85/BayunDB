@@ -35,6 +35,12 @@ pub enum LogRecordType {
     Delete,
     /// Marks a checkpoint in the log
     Checkpoint,
+    /// Records a compensation operation for an update (during undo)
+    CompensationUpdate,
+    /// Records a compensation operation for an insert (during undo)
+    CompensationInsert,
+    /// Records a compensation operation for a delete (during undo)
+    CompensationDelete,
 }
 
 /// Structure representing the content of a data operation log record
