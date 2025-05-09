@@ -3,6 +3,7 @@ pub mod common;
 pub mod storage;
 pub mod index;
 pub mod query;
+pub mod transaction;
 
 // Re-export key items for convenient access
 pub use storage::buffer::BufferPoolManager;
