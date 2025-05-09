@@ -36,7 +36,9 @@ docs/
 │   └── configuration.md
 ├── project/               # Project management docs
 │   ├── roadmap.md
-│   └── design-decisions.md
+│   ├── design-decisions.md
+│   └── implementation-plans/ # Implementation plans for features
+│       └── [feature-name].md
 └── tutorials/             # Tutorials and examples
     ├── basic-usage.md
     └── examples/
@@ -63,6 +65,13 @@ docs/
    - Document internal APIs used across components in `docs/reference/api/internal.md`
    - Include function signatures, parameters, return values, and examples
    - Note any deprecations or planned changes
+
+4. **Implementation Plans**
+   - Create detailed implementation plans in `docs/project/implementation-plans/`
+   - Name files based on the feature (e.g., `aggregation-operators.md`)
+   - Include sections for research, design, implementation phases, testing, and timeline
+   - Link implementation plans from relevant roadmap items
+   - Update plans as implementation progresses
 
 ### 2. Documentation Quality
 

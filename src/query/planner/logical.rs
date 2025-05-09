@@ -190,6 +190,8 @@ mod tests {
             }],
             where_clause: None,
             joins: vec![],
+            group_by: None,
+            having: None,
         };
         
         // Build logical plan
@@ -228,6 +230,8 @@ mod tests {
                 right: Box::new(Expression::Literal(Value::Integer(100))),
             })),
             joins: vec![],
+            group_by: None,
+            having: None,
         };
         
         // Build logical plan
@@ -279,6 +283,8 @@ mod tests {
                 right: Box::new(Expression::Literal(Value::Integer(1))),
             })),
             joins: vec![],
+            group_by: None,
+            having: None,
         };
     }
 
@@ -309,6 +315,8 @@ mod tests {
                 right: Box::new(Expression::Literal(Value::Integer(100))),
             })),
             joins: vec![],
+            group_by: None,
+            having: None,
         };
         
         // Build logical plan
@@ -347,6 +355,8 @@ mod tests {
             }],
             where_clause: None,
             joins: vec![],
+            group_by: None,
+            having: None,
         };
         
         // Build logical plan

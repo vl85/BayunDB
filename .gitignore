@@ -423,3 +423,4 @@ tarpaulin-report.html
 memory
 transaction_demo.db
 .bayundb_history
+!/src/bin

@@ -33,6 +33,15 @@ pub enum TokenType {
     OUTER,
     CROSS,
     ON,
+    GROUP,
+    BY,
+    HAVING,
+    COUNT,
+    SUM,
+    AVG,
+    MIN,
+    MAX,
+    AS,
     
     // Literals
     STRING(String),
@@ -240,6 +249,15 @@ impl<'a> Lexer<'a> {
             "OUTER" => TokenType::OUTER,
             "CROSS" => TokenType::CROSS,
             "ON" => TokenType::ON,
+            "GROUP" => TokenType::GROUP,
+            "BY" => TokenType::BY,
+            "HAVING" => TokenType::HAVING,
+            "COUNT" => TokenType::COUNT,
+            "SUM" => TokenType::SUM,
+            "AVG" => TokenType::AVG,
+            "MIN" => TokenType::MIN,
+            "MAX" => TokenType::MAX,
+            "AS" => TokenType::AS,
             _ => TokenType::IDENTIFIER(ident.to_string()),
         }
     }

@@ -1,0 +1,317 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+use anyhow::{Result, Context};
+use clap::{Parser, Subcommand};
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
+use rustyline::history::DefaultHistory;
+
+use bayundb::storage::buffer::BufferPoolManager;
+use bayundb::storage::page::PageManager;
+use bayundb::index::btree::BTreeIndex;
+use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
+use bayundb::transaction::wal::log_buffer::LogBufferConfig;
+use bayundb::query::executor::engine::ExecutionEngine;
+use bayundb::query::executor::result::{QueryResult, QueryResultSet};
+
+const HISTORY_FILE: &str = ".bayundb_history";
+
+#[derive(Parser)]
+#[command(author, version, about = "BayunDB CLI - A tool for interacting with BayunDB")]
+struct Cli {
+    /// Database file path
+    #[arg(short, long, default_value = "database.db")]
+    db_path: String,
+
+    /// Log directory path
+    #[arg(short, long, default_value = "logs")]
+    log_dir: String,
+
+    /// Buffer pool size (number of pages)
+    #[arg(short, long, default_value_t = 1000)]
+    buffer_size: usize,
+
+    /// Command to execute
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start an interactive shell
+    Shell,
+    
+    /// Execute a SQL query directly
+    Query {
+        /// SQL query to execute
+        query: String,
+    },
+    
+    /// Create a new database
+    Create,
+    
+    /// Show database information
+    Info,
+}
+
+/// Database instance with all required components
+struct Database {
+    buffer_pool: Arc<BufferPoolManager>,
+    page_manager: PageManager,
+    btree_index: BTreeIndex<i32>,
+    log_manager: Arc<LogManager>,
+    execution_engine: ExecutionEngine,
+}
+
+impl Database {
+    fn new(db_path: &str, log_dir: &str, buffer_size: usize) -> Result<Self> {
+        // Create logs directory if it doesn't exist
+        let log_dir = PathBuf::from(log_dir);
+        std::fs::create_dir_all(&log_dir)?;
+        
+        // Configure log manager
+        let log_config = LogManagerConfig {
+            log_dir,
+            log_file_base_name: "bayun_log".to_string(),
+            max_log_file_size: 1024 * 1024, // 1 MB
+            buffer_config: LogBufferConfig::default(),
+            force_sync: true, // Force sync for safety
+        };
+        
+        // Create log manager
+        let log_manager = Arc::new(LogManager::new(log_config)?);
+        
+        // Create buffer pool manager with WAL support
+        let buffer_pool = Arc::new(BufferPoolManager::new_with_wal(
+            buffer_size,
+            db_path,
+            log_manager.clone(),
+        )?);
+        
+        // Create page manager
+        let page_manager = PageManager::new();
+        
+        // Create B+Tree index for integer keys
+        let btree_index = BTreeIndex::<i32>::new(buffer_pool.clone())?;
+        
+        // Create execution engine
+        let execution_engine = ExecutionEngine::new(buffer_pool.clone());
+        
+        Ok(Database {
+            buffer_pool,
+            page_manager,
+            btree_index,
+            log_manager,
+            execution_engine,
+        })
+    }
+    
+    fn execute_query(&self, query: &str) -> QueryResult<QueryResultSet> {
+        // Execute the query directly using the execution engine
+        self.execution_engine.execute_query(query)
+    }
+}
+
+fn run_shell(db: &Database) -> Result<()> {
+    println!("Welcome to BayunDB CLI. Type 'help' for assistance or 'exit' to quit.");
+    
+    let mut rl = Editor::<(), DefaultHistory>::new()?;
+    if let Err(err) = rl.load_history(HISTORY_FILE) {
+        if !err.to_string().contains("No such file or directory") {
+            println!("Error loading history: {}", err);
+        }
+    }
+    
+    loop {
+        let readline = rl.readline("bayundb> ");
+        match readline {
+            Ok(line) => {
+                rl.add_history_entry(&line);
+                
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                
+                match line.to_lowercase().as_str() {
+                    "exit" | "quit" => {
+                        println!("Goodbye!");
+                        break;
+                    }
+                    "help" => {
+                        print_help();
+                    }
+                    _ => {
+                        // Assume it's a SQL query
+                        match db.execute_query(line) {
+                            Ok(result) => {
+                                display_result(&result);
+                            }
+                            Err(err) => {
+                                println!("Error: {}", err);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {}", err);
+                break;
+            }
+        }
+    }
+    
+    rl.save_history(HISTORY_FILE)?;
+    Ok(())
+}
+
+fn print_help() {
+    println!("Available commands:");
+    println!("  CREATE TABLE <name> (...)     - Create a new table");
+    println!("  INSERT INTO <table> VALUES    - Insert data into a table");
+    println!("  SELECT ... FROM <table>       - Query data from a table");
+    println!("  UPDATE <table> SET ...        - Update data in a table");
+    println!("  DELETE FROM <table>           - Delete data from a table");
+    println!("  help                          - Display this help message");
+    println!("  exit                          - Exit the CLI");
+}
+
+fn display_result(result: &QueryResultSet) {
+    if result.rows().is_empty() {
+        println!("(0 rows)");
+        return;
+    }
+    
+    // Display column headers
+    let headers = result.columns();
+    let mut widths = vec![0; headers.len()];
+    
+    // Calculate column widths
+    for (i, header) in headers.iter().enumerate() {
+        widths[i] = header.len().max(widths[i]);
+    }
+    
+    for row in result.rows() {
+        for (i, value) in row.values().iter().enumerate() {
+            let value_str = value.to_string();
+            widths[i] = value_str.len().max(widths[i]);
+        }
+    }
+    
+    // Print headers
+    print!("| ");
+    for (i, header) in headers.iter().enumerate() {
+        print!("{:<width$} | ", header, width = widths[i]);
+    }
+    println!();
+    
+    // Print separator
+    print!("+");
+    for width in &widths {
+        print!("{:-<width$}+", "", width = width + 2);
+    }
+    println!();
+    
+    // Print rows
+    for row in result.rows() {
+        print!("| ");
+        for (i, value) in row.values().iter().enumerate() {
+            print!("{:<width$} | ", value, width = widths[i]);
+        }
+        println!();
+    }
+    
+    println!("({} rows)", result.row_count());
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    
+    // Initialize the database
+    let db = Database::new(&cli.db_path, &cli.log_dir, cli.buffer_size)
+        .context("Failed to initialize database")?;
+    
+    match &cli.command {
+        Some(Commands::Shell) => {
+            run_shell(&db)?;
+        }
+        Some(Commands::Query { query }) => {
+            match db.execute_query(query) {
+                Ok(result) => {
+                    display_result(&result);
+                }
+                Err(err) => {
+                    eprintln!("Error executing query: {}", err);
+                }
+            }
+        }
+        Some(Commands::Create) => {
+            println!("Creating new database at: {}", cli.db_path);
+            // Database is already initialized
+            println!("Database created successfully!");
+        }
+        Some(Commands::Info) => {
+            println!("BayunDB Information:");
+            println!("  Database file: {}", cli.db_path);
+            println!("  Log directory: {}", cli.log_dir);
+            println!("  Buffer pool size: {} pages", cli.buffer_size);
+            // TODO: Add more information like table count, record count, etc.
+        }
+        None => {
+            // Default to shell if no command is specified
+            run_shell(&db)?;
+        }
+    }
+    
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bayundb::query::executor::result::{Row, DataValue};
+    use std::io::Write;
+    
+    #[test]
+    fn test_display_result_with_empty_set() {
+        let result = QueryResultSet::new(vec!["id".to_string(), "name".to_string()]);
+        
+        // This test just makes sure the function doesn't panic with empty results
+        display_result(&result);
+    }
+    
+    #[test]
+    fn test_display_result_formats_correctly() {
+        let mut result = QueryResultSet::new(vec!["id".to_string(), "name".to_string()]);
+        
+        // Create test rows
+        let mut row1 = Row::new();
+        row1.set("id".to_string(), DataValue::Integer(1));
+        row1.set("name".to_string(), DataValue::Text("Test 1".to_string()));
+        
+        let mut row2 = Row::new();
+        row2.set("id".to_string(), DataValue::Integer(2));
+        row2.set("name".to_string(), DataValue::Text("Test 2".to_string()));
+        
+        // Add rows to result set
+        result.add_row(row1);
+        result.add_row(row2);
+        
+        // This test just makes sure the function doesn't panic
+        display_result(&result);
+    }
+    
+    #[test]
+    fn test_help_command_content() {
+        // This test just makes sure the function doesn't panic
+        print_help();
+    }
+} 

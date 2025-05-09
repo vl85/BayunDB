@@ -25,6 +25,10 @@ pub struct SelectStatement {
     pub where_clause: Option<Box<Expression>>,
     /// JOIN clauses (optional)
     pub joins: Vec<JoinClause>,
+    /// GROUP BY clause (optional)
+    pub group_by: Option<Vec<Expression>>,
+    /// HAVING clause (optional)
+    pub having: Option<Box<Expression>>,
 }
 
 /// Column in a SELECT statement
@@ -81,6 +85,16 @@ pub enum JoinType {
     Cross,
 }
 
+/// Aggregate function types
+#[derive(Debug, Clone, PartialEq)]
+pub enum AggregateFunction {
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
 /// Expression in SQL
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -98,6 +112,11 @@ pub enum Expression {
     Function {
         name: String,
         args: Vec<Expression>,
+    },
+    /// Aggregate function
+    Aggregate {
+        function: AggregateFunction,
+        arg: Option<Box<Expression>>,
     },
 }
 
@@ -220,6 +239,18 @@ impl fmt::Display for JoinType {
     }
 }
 
+impl fmt::Display for AggregateFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AggregateFunction::Count => write!(f, "COUNT"),
+            AggregateFunction::Sum => write!(f, "SUM"),
+            AggregateFunction::Avg => write!(f, "AVG"),
+            AggregateFunction::Min => write!(f, "MIN"),
+            AggregateFunction::Max => write!(f, "MAX"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +282,8 @@ mod tests {
                 right: Box::new(Expression::Literal(Value::Integer(1))),
             })),
             joins: vec![],
+            group_by: None,
+            having: None,
         });
 
         // Verify it was constructed correctly
@@ -259,6 +292,8 @@ mod tests {
             assert_eq!(select.from.len(), 1);
             assert!(select.where_clause.is_some());
             assert!(select.joins.is_empty());
+            assert!(select.group_by.is_none());
+            assert!(select.having.is_none());
         } else {
             panic!("Expected SELECT statement");
         }
@@ -307,6 +342,8 @@ mod tests {
                     }),
                 }
             ],
+            group_by: None,
+            having: None,
         });
 
         // Verify it was constructed correctly

@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+If you have tests strategy guide - follow it, update as needed. If you don't have - create one. Remember to check integration tests. Remember to check benches

@@ -147,6 +147,8 @@ mod tests {
             }],
             where_clause: None,
             joins: vec![],
+            group_by: None,
+            having: None,
         });
         
         // This will likely fail since we don't have a real table,
@@ -202,7 +204,7 @@ mod tests {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
                     table: None,
-                    name: "id".to_string(),
+                    name: "id".to_string()
                 }),
                 SelectColumn::Column(ColumnReference {
                     table: None,
@@ -215,6 +217,8 @@ mod tests {
             }],
             where_clause: None,
             joins: vec![],
+            group_by: None,
+            having: None,
         });
         
         // Try to build a plan

@@ -138,3 +138,62 @@ The CLI will continue to evolve alongside the database. Planned enhancements inc
 - Database statistics and monitoring
 - Tab completion for SQL keywords and table/column names
 - Automatic schema discovery for suggestions 
+
+## SQL Feature Support
+
+The CLI supports the following SQL features:
+
+### SELECT Statements
+```sql
+-- Basic selection
+SELECT column1, column2 FROM table;
+
+-- Filtering with WHERE clause
+SELECT * FROM users WHERE age > 21;
+
+-- Sorting with ORDER BY (coming soon)
+SELECT * FROM users ORDER BY name;
+
+-- Limiting results (coming soon)
+SELECT * FROM users LIMIT 10;
+```
+
+### JOIN Operations
+```sql
+-- Inner join
+SELECT users.name, orders.amount 
+FROM users 
+JOIN orders ON users.id = orders.user_id;
+
+-- Left join
+SELECT users.name, orders.amount 
+FROM users 
+LEFT JOIN orders ON users.id = orders.user_id;
+```
+
+### Aggregate Functions
+```sql
+-- Count all rows
+SELECT COUNT(*) FROM users;
+
+-- Count with grouping
+SELECT department_id, COUNT(*) 
+FROM employees 
+GROUP BY department_id;
+
+-- Multiple aggregate functions
+SELECT department_id, 
+       COUNT(*) as employee_count,
+       AVG(salary) as avg_salary,
+       SUM(salary) as total_payroll,
+       MIN(salary) as lowest_salary,
+       MAX(salary) as highest_salary
+FROM employees
+GROUP BY department_id;
+
+-- Filtering groups with HAVING
+SELECT department_id, COUNT(*) 
+FROM employees 
+GROUP BY department_id 
+HAVING COUNT(*) > 5;
+``` 

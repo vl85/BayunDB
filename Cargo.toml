@@ -67,6 +67,10 @@ path = "tests/integration/recovery_test.rs"
 name = "cli_test"
 path = "tests/integration/cli_test.rs"
 
+[[test]]
+name = "aggregation_test"
+path = "tests/integration/aggregation_test.rs"
+
 [dependencies]
 thiserror = "1.0"
 anyhow = "1.0"

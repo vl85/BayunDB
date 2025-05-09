@@ -146,6 +146,23 @@ impl Parser {
             None
         };
         
+        // Parse optional GROUP BY clause
+        let group_by = if self.current_token_is(TokenType::GROUP) {
+            self.next_token(); // Consume GROUP
+            self.expect_token(TokenType::BY)?; // Expect BY
+            Some(self.parse_group_by_expressions()?)
+        } else {
+            None
+        };
+        
+        // Parse optional HAVING clause
+        let having = if self.current_token_is(TokenType::HAVING) {
+            self.next_token(); // Consume HAVING
+            Some(Box::new(self.parse_expression(0)?))
+        } else {
+            None
+        };
+        
         // Optional semicolon at the end
         if self.current_token_is(TokenType::SEMICOLON) {
             self.next_token();
@@ -156,6 +173,8 @@ impl Parser {
             from,
             where_clause,
             joins,
+            group_by,
+            having,
         }))
     }
     
@@ -172,10 +191,80 @@ impl Parser {
                             columns.push(SelectColumn::Wildcard);
                             self.next_token();
                         }
+                        TokenType::COUNT | TokenType::SUM | TokenType::AVG | 
+                        TokenType::MIN | TokenType::MAX => {
+                            // Handle aggregate function
+                            let expr = self.parse_aggregate_function(token_type)?;
+                            
+                            // Check for optional alias
+                            let alias = if let Some(next_token) = self.peek_token() {
+                                if next_token.token_type == TokenType::IDENTIFIER("AS".to_string()) || 
+                                   next_token.token_type == TokenType::AS {
+                                    self.next_token(); // Consume AS
+                                    if let Some(alias_token) = self.next_token() {
+                                        if let TokenType::IDENTIFIER(alias_name) = alias_token.token_type {
+                                            Some(alias_name)
+                                        } else {
+                                            return Err(ParseError::ExpectedToken(
+                                                TokenType::IDENTIFIER("alias".to_string()),
+                                                alias_token
+                                            ));
+                                        }
+                                    } else {
+                                        return Err(ParseError::EndOfInput);
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            
+                            columns.push(SelectColumn::Expression {
+                                expr: Box::new(expr),
+                                alias,
+                            });
+                        }
                         TokenType::IDENTIFIER(_) => {
-                            // Parse column reference
-                            let col_ref = self.parse_column_reference()?;
-                            columns.push(SelectColumn::Column(col_ref));
+                            // Check if this is the start of an expression
+                            let expr = self.parse_expression(0)?;
+                            
+                            // Check for optional alias
+                            let alias = if self.current_token_is(TokenType::IDENTIFIER("AS".to_string())) || 
+                                           self.current_token_is(TokenType::AS) {
+                                self.next_token(); // Consume AS
+                                if let Some(token) = self.next_token() {
+                                    if let TokenType::IDENTIFIER(name) = token.token_type {
+                                        Some(name)
+                                    } else {
+                                        return Err(ParseError::ExpectedToken(
+                                            TokenType::IDENTIFIER("alias".to_string()),
+                                            token
+                                        ));
+                                    }
+                                } else {
+                                    return Err(ParseError::EndOfInput);
+                                }
+                            } else {
+                                None
+                            };
+                            
+                            // If this is a simple column reference, use SelectColumn::Column
+                            if let Expression::Column(col_ref) = expr {
+                                if alias.is_none() {
+                                    columns.push(SelectColumn::Column(col_ref));
+                                } else {
+                                    columns.push(SelectColumn::Expression {
+                                        expr: Box::new(Expression::Column(col_ref)),
+                                        alias,
+                                    });
+                                }
+                            } else {
+                                columns.push(SelectColumn::Expression {
+                                    expr: Box::new(expr),
+                                    alias,
+                                });
+                            }
                         }
                         _ => {
                             return Err(ParseError::UnexpectedToken(token.clone()));
@@ -312,36 +401,39 @@ impl Parser {
         Ok(left_expr)
     }
     
-    /// Parse a prefix expression (literal, column reference, etc.)
+    /// Parse a prefix expression (literal, identifier, etc.)
     fn parse_prefix_expression(&mut self) -> ParseResult<Expression> {
         match &self.current_token {
             Some(token) => {
-                match &token.token_type {
-                    TokenType::INTEGER(value) => {
-                        let val = *value;
+                let token_type = token.token_type.clone();
+                match token_type {
+                    TokenType::INTEGER(val) => {
                         self.next_token();
                         Ok(Expression::Literal(Value::Integer(val)))
-                    }
-                    TokenType::FLOAT(value) => {
-                        let val = *value;
+                    },
+                    TokenType::FLOAT(val) => {
                         self.next_token();
                         Ok(Expression::Literal(Value::Float(val)))
-                    }
-                    TokenType::STRING(value) => {
-                        let val = value.clone();
+                    },
+                    TokenType::STRING(val) => {
                         self.next_token();
                         Ok(Expression::Literal(Value::String(val)))
-                    }
+                    },
                     TokenType::IDENTIFIER(_) => {
+                        // Parse column reference
                         let col_ref = self.parse_column_reference()?;
                         Ok(Expression::Column(col_ref))
-                    }
+                    },
+                    TokenType::COUNT | TokenType::SUM | TokenType::AVG | 
+                    TokenType::MIN | TokenType::MAX => {
+                        self.parse_aggregate_function(token_type)
+                    },
                     TokenType::LeftParen => {
                         self.next_token(); // Consume left paren
                         let expr = self.parse_expression(0)?;
-                        self.expect_token(TokenType::RightParen)?;
+                        self.expect_token(TokenType::RightParen)?; // Expect right paren
                         Ok(expr)
-                    }
+                    },
                     _ => Err(ParseError::UnexpectedToken(token.clone())),
                 }
             },
@@ -489,6 +581,58 @@ impl Parser {
             },
             None => Err(ParseError::EndOfInput),
         }
+    }
+    
+    /// Parse expressions in the GROUP BY clause
+    fn parse_group_by_expressions(&mut self) -> ParseResult<Vec<Expression>> {
+        let mut expressions = Vec::new();
+        
+        loop {
+            let expr = self.parse_expression(0)?;
+            expressions.push(expr);
+            
+            // Check if we have a comma for more expressions
+            if self.current_token_is(TokenType::COMMA) {
+                self.next_token(); // Consume comma
+                continue;
+            }
+            
+            break;
+        }
+        
+        Ok(expressions)
+    }
+    
+    /// Parse an aggregate function expression
+    fn parse_aggregate_function(&mut self, token_type: TokenType) -> ParseResult<Expression> {
+        // Convert token to aggregate function type
+        let function = match token_type {
+            TokenType::COUNT => AggregateFunction::Count,
+            TokenType::SUM => AggregateFunction::Sum,
+            TokenType::AVG => AggregateFunction::Avg,
+            TokenType::MIN => AggregateFunction::Min,
+            TokenType::MAX => AggregateFunction::Max,
+            _ => return Err(ParseError::InvalidSyntax("Expected aggregate function".to_string())),
+        };
+        
+        // Consume the function name
+        self.next_token();
+        
+        // Expect opening parenthesis
+        self.expect_token(TokenType::LeftParen)?;
+        
+        // Parse the argument (could be * for COUNT(*))
+        let arg = if self.current_token_is(TokenType::MULTIPLY) {
+            self.next_token(); // Consume *
+            None
+        } else {
+            Some(Box::new(self.parse_expression(0)?))
+        };
+        
+        // Expect closing parenthesis
+        self.expect_token(TokenType::RightParen)?;
+        
+        Ok(Expression::Aggregate { function, arg })
     }
     
     // Placeholder implementations for other statement types
@@ -640,6 +784,150 @@ mod tests {
             let join = &select.joins[0];
             assert_eq!(join.join_type, JoinType::LeftOuter);
             assert_eq!(join.table.name, "orders");
+        } else {
+            panic!("Expected SELECT statement");
+        }
+    }
+    
+    #[test]
+    fn test_parse_aggregate_functions() {
+        // Test COUNT(*)
+        let sql = "SELECT COUNT(*) FROM users";
+        let mut parser = Parser::new(sql);
+        
+        let stmt = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = stmt {
+            assert_eq!(select.columns.len(), 1);
+            
+            if let SelectColumn::Expression { expr, .. } = &select.columns[0] {
+                if let Expression::Aggregate { function, arg } = &**expr {
+                    assert_eq!(*function, AggregateFunction::Count);
+                    assert!(arg.is_none());
+                } else {
+                    panic!("Expected aggregate function expression");
+                }
+            } else {
+                panic!("Expected expression in column list");
+            }
+        } else {
+            panic!("Expected SELECT statement");
+        }
+        
+        // Test other aggregate functions
+        let sql = "SELECT SUM(price), AVG(quantity), MIN(price), MAX(quantity) FROM products";
+        let mut parser = Parser::new(sql);
+        
+        let stmt = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = stmt {
+            assert_eq!(select.columns.len(), 4);
+            
+            // Check SUM
+            if let SelectColumn::Expression { expr, .. } = &select.columns[0] {
+                if let Expression::Aggregate { function, arg } = &**expr {
+                    assert_eq!(*function, AggregateFunction::Sum);
+                    assert!(arg.is_some());
+                } else {
+                    panic!("Expected aggregate function expression");
+                }
+            }
+            
+            // Check AVG
+            if let SelectColumn::Expression { expr, .. } = &select.columns[1] {
+                if let Expression::Aggregate { function, arg } = &**expr {
+                    assert_eq!(*function, AggregateFunction::Avg);
+                    assert!(arg.is_some());
+                } else {
+                    panic!("Expected aggregate function expression");
+                }
+            }
+            
+            // Check MIN
+            if let SelectColumn::Expression { expr, .. } = &select.columns[2] {
+                if let Expression::Aggregate { function, arg } = &**expr {
+                    assert_eq!(*function, AggregateFunction::Min);
+                    assert!(arg.is_some());
+                } else {
+                    panic!("Expected aggregate function expression");
+                }
+            }
+            
+            // Check MAX
+            if let SelectColumn::Expression { expr, .. } = &select.columns[3] {
+                if let Expression::Aggregate { function, arg } = &**expr {
+                    assert_eq!(*function, AggregateFunction::Max);
+                    assert!(arg.is_some());
+                } else {
+                    panic!("Expected aggregate function expression");
+                }
+            }
+        } else {
+            panic!("Expected SELECT statement");
+        }
+    }
+    
+    #[test]
+    fn test_parse_group_by() {
+        let sql = "SELECT department_id, COUNT(*) FROM employees GROUP BY department_id";
+        let mut parser = Parser::new(sql);
+        
+        let stmt = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = stmt {
+            assert!(select.group_by.is_some());
+            assert_eq!(select.group_by.unwrap().len(), 1);
+            assert!(select.having.is_none());
+        } else {
+            panic!("Expected SELECT statement");
+        }
+        
+        // Test with multiple GROUP BY columns
+        let sql = "SELECT department_id, job_title, COUNT(*) FROM employees GROUP BY department_id, job_title";
+        let mut parser = Parser::new(sql);
+        
+        let stmt = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = stmt {
+            assert!(select.group_by.is_some());
+            assert_eq!(select.group_by.unwrap().len(), 2);
+        } else {
+            panic!("Expected SELECT statement");
+        }
+    }
+    
+    #[test]
+    fn test_parse_having() {
+        let sql = "SELECT department_id, COUNT(*) FROM employees GROUP BY department_id HAVING COUNT(*) > 5";
+        let mut parser = Parser::new(sql);
+        
+        let stmt = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = stmt {
+            assert!(select.group_by.is_some());
+            assert!(select.having.is_some());
+            
+            if let Expression::BinaryOp { op, .. } = *select.having.unwrap() {
+                assert_eq!(op, Operator::GreaterThan);
+            } else {
+                panic!("Expected binary operation in HAVING clause");
+            }
+        } else {
+            panic!("Expected SELECT statement");
+        }
+    }
+    
+    #[test]
+    fn test_parse_complex_aggregation() {
+        let sql = "SELECT department_id, AVG(salary) FROM employees WHERE status = 'active' GROUP BY department_id HAVING AVG(salary) > 50000";
+        let mut parser = Parser::new(sql);
+        
+        let stmt = parser.parse_statement().unwrap();
+        
+        if let Statement::Select(select) = stmt {
+            assert!(select.where_clause.is_some());
+            assert!(select.group_by.is_some());
+            assert!(select.having.is_some());
         } else {
             panic!("Expected SELECT statement");
         }
