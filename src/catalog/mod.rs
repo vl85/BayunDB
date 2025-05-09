@@ -1,0 +1,134 @@
+// Catalog Management Module
+//
+// This module is responsible for managing the database schema metadata,
+// including tables, columns, indexes, and other database objects.
+
+pub mod schema;
+pub mod table;
+pub mod column;
+
+// Re-export key types
+pub use self::schema::Schema;
+pub use self::table::Table;
+pub use self::column::Column;
+pub use self::schema::DataType;
+
+use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
+
+// Global catalog instance using a thread-safe lazy initialization
+static CATALOG_INSTANCE: Lazy<Arc<RwLock<Catalog>>> = Lazy::new(|| {
+    let mut schemas = HashMap::new();
+    
+    // Create default schema
+    let default_schema = Schema::new("public".to_string());
+    schemas.insert("public".to_string(), default_schema);
+    
+    let catalog = Catalog {
+        schemas: RwLock::new(schemas),
+        current_schema: RwLock::new("public".to_string()),
+    };
+    
+    Arc::new(RwLock::new(catalog))
+});
+
+/// The Catalog is the central repository for all database schema information
+pub struct Catalog {
+    /// Schemas in the database
+    schemas: RwLock<HashMap<String, Schema>>,
+    /// Current schema name
+    current_schema: RwLock<String>,
+}
+
+impl Catalog {
+    /// Get the global catalog instance
+    pub fn instance() -> Arc<RwLock<Catalog>> {
+        CATALOG_INSTANCE.clone()
+    }
+    
+    /// Create a new, empty catalog (primarily for testing)
+    pub fn new() -> Self {
+        let mut schemas = HashMap::new();
+        
+        // Create default schema
+        let default_schema = Schema::new("public".to_string());
+        schemas.insert("public".to_string(), default_schema);
+        
+        Catalog {
+            schemas: RwLock::new(schemas),
+            current_schema: RwLock::new("public".to_string()),
+        }
+    }
+    
+    /// Get a reference to a schema by name
+    pub fn get_schema(&self, name: &str) -> Option<Schema> {
+        self.schemas.read().unwrap().get(name).cloned()
+    }
+    
+    /// Get the current schema
+    pub fn current_schema(&self) -> Schema {
+        let current_name = self.current_schema.read().unwrap().clone();
+        self.get_schema(&current_name).unwrap()
+    }
+    
+    /// Create a new schema
+    pub fn create_schema(&self, name: String) -> Result<(), String> {
+        let mut schemas = self.schemas.write().unwrap();
+        if schemas.contains_key(&name) {
+            return Err(format!("Schema {} already exists", name));
+        }
+        
+        let schema = Schema::new(name.clone());
+        schemas.insert(name, schema);
+        Ok(())
+    }
+    
+    /// Set the current schema
+    pub fn set_current_schema(&self, name: String) -> Result<(), String> {
+        let schemas = self.schemas.read().unwrap();
+        if !schemas.contains_key(&name) {
+            return Err(format!("Schema {} does not exist", name));
+        }
+        
+        let mut current = self.current_schema.write().unwrap();
+        *current = name;
+        Ok(())
+    }
+    
+    /// Create a table in the current schema
+    pub fn create_table(&self, table: Table) -> Result<(), String> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let mut schemas = self.schemas.write().unwrap();
+        
+        if let Some(schema) = schemas.get_mut(&schema_name) {
+            schema.add_table(table)
+        } else {
+            Err(format!("Schema {} does not exist", schema_name))
+        }
+    }
+    
+    /// Check if a table exists in the current schema
+    pub fn table_exists(&self, table_name: &str) -> bool {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let schemas = self.schemas.read().unwrap();
+        
+        if let Some(schema) = schemas.get(&schema_name) {
+            schema.has_table(table_name)
+        } else {
+            false
+        }
+    }
+    
+    /// Get a table from the current schema
+    pub fn get_table(&self, table_name: &str) -> Option<Table> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let schemas = self.schemas.read().unwrap();
+        
+        if let Some(schema) = schemas.get(&schema_name) {
+            schema.get_table(table_name)
+        } else {
+            None
+        }
+    }
+} 

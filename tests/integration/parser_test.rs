@@ -40,17 +40,26 @@ fn test_create_table_statement() -> Result<()> {
     let sql = "CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN)";
     let mut parser = Parser::new(sql);
     
-    // Currently CREATE TABLE is not implemented, so we expect an error
+    // CREATE TABLE is now implemented, so we expect success
     let result = parser.parse_statement();
     
-    // The parser should return an error indicating CREATE is not implemented
-    assert!(result.is_err(), "CREATE TABLE should return an error since it's not implemented");
+    // The parser should return a valid CREATE statement
+    assert!(result.is_ok(), "CREATE TABLE should be successfully parsed");
     
-    if let Err(ParseError::InvalidSyntax(msg)) = result {
-        assert!(msg.contains("CREATE not implemented"), 
-                "Error should indicate CREATE is not implemented");
+    if let Ok(Statement::Create(create_stmt)) = result {
+        assert_eq!(create_stmt.table_name, "users");
+        assert_eq!(create_stmt.columns.len(), 3);
+        
+        // Check first column
+        assert_eq!(create_stmt.columns[0].name, "id");
+        
+        // Check second column
+        assert_eq!(create_stmt.columns[1].name, "name");
+        
+        // Check third column
+        assert_eq!(create_stmt.columns[2].name, "active");
     } else {
-        panic!("Expected InvalidSyntax error for unimplemented CREATE statement");
+        panic!("Expected CREATE TABLE statement");
     }
     
     Ok(())

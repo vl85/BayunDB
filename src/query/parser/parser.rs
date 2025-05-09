@@ -647,6 +647,199 @@ impl Parser {
         }
     }
     
+    /// Parse a CREATE statement
+    fn parse_create(&mut self) -> ParseResult<Statement> {
+        // Consume CREATE keyword
+        self.expect_token(TokenType::CREATE)?;
+        
+        // Check what we're creating
+        if self.current_token_is(TokenType::TABLE) {
+            self.parse_create_table()
+        } else {
+            Err(ParseError::InvalidSyntax("Only CREATE TABLE is supported".to_string()))
+        }
+    }
+    
+    /// Parse a CREATE TABLE statement
+    fn parse_create_table(&mut self) -> ParseResult<Statement> {
+        // Consume TABLE keyword
+        self.expect_token(TokenType::TABLE)?;
+        
+        // Parse table name
+        let table_name = self.parse_identifier()?;
+        
+        // Expect opening parenthesis
+        self.expect_token(TokenType::LeftParen)?;
+        
+        // Parse column definitions
+        let columns = self.parse_column_definitions()?;
+        
+        // Expect closing parenthesis
+        self.expect_token(TokenType::RightParen)?;
+        
+        // Optional semicolon
+        if self.current_token_is(TokenType::SEMICOLON) {
+            self.next_token();
+        }
+        
+        Ok(Statement::Create(CreateStatement {
+            table_name,
+            columns,
+        }))
+    }
+    
+    /// Parse column definitions
+    fn parse_column_definitions(&mut self) -> ParseResult<Vec<ColumnDef>> {
+        let mut columns = Vec::new();
+        
+        loop {
+            // Parse column name
+            let name = self.parse_identifier()?;
+            
+            // Parse data type
+            let data_type = self.parse_data_type()?;
+            
+            // Check for constraints
+            let mut nullable = true;
+            let mut primary_key = false;
+            
+            // Look for NOT NULL and PRIMARY KEY constraints
+            // Use match to check identifier values with case insensitivity
+            loop {
+                match &self.current_token {
+                    Some(token) => {
+                        match &token.token_type {
+                            TokenType::IDENTIFIER(s) if s.to_uppercase() == "NOT" => {
+                                self.next_token(); // Consume NOT
+                                
+                                // Expect NULL
+                                match &self.current_token {
+                                    Some(token) => {
+                                        match &token.token_type {
+                                            TokenType::IDENTIFIER(s) if s.to_uppercase() == "NULL" => {
+                                                self.next_token(); // Consume NULL
+                                                nullable = false;
+                                            },
+                                            _ => {
+                                                return Err(ParseError::ExpectedToken(
+                                                    TokenType::IDENTIFIER("NULL".to_string()),
+                                                    token.clone()
+                                                ));
+                                            }
+                                        }
+                                    },
+                                    None => return Err(ParseError::EndOfInput),
+                                }
+                            },
+                            TokenType::IDENTIFIER(s) if s.to_uppercase() == "PRIMARY" => {
+                                self.next_token(); // Consume PRIMARY
+                                
+                                // Expect KEY
+                                match &self.current_token {
+                                    Some(token) => {
+                                        match &token.token_type {
+                                            TokenType::IDENTIFIER(s) if s.to_uppercase() == "KEY" => {
+                                                self.next_token(); // Consume KEY
+                                                primary_key = true;
+                                                nullable = false; // Primary key columns cannot be null
+                                            },
+                                            _ => {
+                                                return Err(ParseError::ExpectedToken(
+                                                    TokenType::IDENTIFIER("KEY".to_string()),
+                                                    token.clone()
+                                                ));
+                                            }
+                                        }
+                                    },
+                                    None => return Err(ParseError::EndOfInput),
+                                }
+                            },
+                            _ => break, // Not a constraint, break out of the loop
+                        }
+                    },
+                    None => break, // End of input, break out of the loop
+                }
+            }
+            
+            // Add the column definition
+            columns.push(ColumnDef {
+                name,
+                data_type,
+                nullable,
+                primary_key,
+            });
+            
+            // Check if there are more columns
+            if self.current_token_is(TokenType::COMMA) {
+                self.next_token(); // Consume comma
+                continue;
+            }
+            
+            break;
+        }
+        
+        Ok(columns)
+    }
+    
+    /// Parse a data type
+    fn parse_data_type(&mut self) -> ParseResult<DataType> {
+        match &self.current_token {
+            Some(token) => {
+                match &token.token_type {
+                    TokenType::IDENTIFIER(s) => {
+                        // Check for common data types
+                        let data_type = match s.to_uppercase().as_str() {
+                            "INT" | "INTEGER" => DataType::Integer,
+                            "FLOAT" | "REAL" | "DOUBLE" => DataType::Float,
+                            "TEXT" | "VARCHAR" | "CHAR" | "STRING" => DataType::Text,
+                            "BOOL" | "BOOLEAN" => DataType::Boolean,
+                            "DATE" => DataType::Date,
+                            "TIMESTAMP" | "DATETIME" => DataType::Timestamp,
+                            _ => return Err(ParseError::InvalidSyntax(format!("Unknown data type: {}", s))),
+                        };
+                        
+                        self.next_token(); // Consume the data type
+                        
+                        // Handle VARCHAR(n) or similar type specifications
+                        if self.current_token_is(TokenType::LeftParen) {
+                            self.next_token(); // Consume left paren
+                            
+                            // For now, we're ignoring the size parameter
+                            if let Some(token) = &self.current_token {
+                                if let TokenType::INTEGER(_) = token.token_type {
+                                    self.next_token(); // Consume the size
+                                }
+                            }
+                            
+                            self.expect_token(TokenType::RightParen)?;
+                        }
+                        
+                        Ok(data_type)
+                    },
+                    _ => Err(ParseError::UnexpectedToken(token.clone())),
+                }
+            },
+            None => Err(ParseError::EndOfInput),
+        }
+    }
+    
+    /// Parse an identifier
+    fn parse_identifier(&mut self) -> ParseResult<String> {
+        match &self.current_token {
+            Some(token) => {
+                match &token.token_type {
+                    TokenType::IDENTIFIER(s) => {
+                        let identifier = s.clone();
+                        self.next_token(); // Consume the identifier
+                        Ok(identifier)
+                    },
+                    _ => Err(ParseError::UnexpectedToken(token.clone())),
+                }
+            },
+            None => Err(ParseError::EndOfInput),
+        }
+    }
+    
     // Placeholder implementations for other statement types
     fn parse_insert(&mut self) -> ParseResult<Statement> {
         Err(ParseError::InvalidSyntax("INSERT not implemented yet".to_string()))
@@ -658,10 +851,6 @@ impl Parser {
     
     fn parse_delete(&mut self) -> ParseResult<Statement> {
         Err(ParseError::InvalidSyntax("DELETE not implemented yet".to_string()))
-    }
-    
-    fn parse_create(&mut self) -> ParseResult<Statement> {
-        Err(ParseError::InvalidSyntax("CREATE not implemented yet".to_string()))
     }
 }
 
@@ -943,6 +1132,57 @@ mod tests {
             assert!(select.having.is_some());
         } else {
             panic!("Expected SELECT statement");
+        }
+    }
+    
+    #[test]
+    fn test_parse_create_table() {
+        let query = "CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT,
+            created_at TIMESTAMP
+        )";
+        
+        let mut parser = Parser::new(query);
+        let stmt = parser.parse_statement().unwrap();
+        
+        if let Statement::Create(create_stmt) = stmt {
+            // Check table name
+            assert_eq!(create_stmt.table_name, "users");
+            
+            // Check columns
+            assert_eq!(create_stmt.columns.len(), 4);
+            
+            // Check id column
+            let id_col = &create_stmt.columns[0];
+            assert_eq!(id_col.name, "id");
+            assert_eq!(id_col.data_type, DataType::Integer);
+            assert_eq!(id_col.primary_key, true);
+            assert_eq!(id_col.nullable, false);
+            
+            // Check name column
+            let name_col = &create_stmt.columns[1];
+            assert_eq!(name_col.name, "name");
+            assert_eq!(name_col.data_type, DataType::Text);
+            assert_eq!(name_col.primary_key, false);
+            assert_eq!(name_col.nullable, false);
+            
+            // Check email column
+            let email_col = &create_stmt.columns[2];
+            assert_eq!(email_col.name, "email");
+            assert_eq!(email_col.data_type, DataType::Text);
+            assert_eq!(email_col.primary_key, false);
+            assert_eq!(email_col.nullable, true);
+            
+            // Check created_at column
+            let created_col = &create_stmt.columns[3];
+            assert_eq!(created_col.name, "created_at");
+            assert_eq!(created_col.data_type, DataType::Timestamp);
+            assert_eq!(created_col.primary_key, false);
+            assert_eq!(created_col.nullable, true);
+        } else {
+            panic!("Expected CREATE TABLE statement");
         }
     }
 } 

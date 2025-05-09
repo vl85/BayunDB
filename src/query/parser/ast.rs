@@ -176,7 +176,7 @@ pub struct ColumnDef {
 }
 
 /// SQL data types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DataType {
     Integer,
     Float,
