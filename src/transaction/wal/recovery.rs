@@ -9,6 +9,7 @@ use thiserror::Error;
 use crate::common::types::{Lsn, PageId, TxnId};
 use crate::storage::buffer::BufferPoolManager;
 use crate::transaction::wal::log_manager::{LogManager, LogManagerError};
+use crate::transaction::wal::log_record::{LogRecord, LogRecordType, LogRecordContent};
 
 /// Error type for recovery operations
 #[derive(Error, Debug)]
@@ -195,25 +196,17 @@ impl RecoveryManager {
             return Ok(());
         }
         
-        // PLACEHOLDER: In a complete implementation, we would scan back from the last LSN of each loser transaction
-        // and undo all operations
-        debug!("Undo phase: placeholder implementation");
+        info!("Undo phase: {} uncommitted transactions found", self.loser_transactions.len());
         
+        // Process each uncommitted transaction
         for txn_id in &self.loser_transactions {
             if let Some(txn_info) = self.transaction_table.get(txn_id) {
-                debug!("Would undo transaction {} (last LSN: {})", txn_id, txn_info.last_lsn);
-                
-                // Simulate undoing operations
-                // In a real implementation, we would scan the log backwards from last_lsn
-                // and undo each operation
-                
-                // For now, just log that we would undo the transaction
-                info!("Transaction {} aborted during recovery", txn_id);
+                info!("Transaction {} (last LSN: {}) would be rolled back in a full implementation", 
+                     txn_id, txn_info.last_lsn);
             }
         }
         
-        // In a real implementation, we would flush the buffer pool
-        debug!("Would flush buffer pool to ensure changes are persisted");
+        info!("Undo phase completed (NOTE: Transaction rollback not fully implemented yet)");
         
         Ok(())
     }

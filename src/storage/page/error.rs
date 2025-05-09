@@ -8,4 +8,6 @@ pub enum PageError {
     RecordNotFound,
     #[error("Invalid record ID")]
     InvalidRecordId,
+    #[error("Record already exists at this ID")]
+    DuplicateRecord,
 } 

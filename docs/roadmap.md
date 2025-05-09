@@ -19,6 +19,7 @@ This document outlines the planned next steps for BayunDB development.
    - B+Tree index benchmarks
    - Query parser benchmarks with JSON output format
    - Automated benchmark report generation
+   - WAL and recovery performance benchmarks ✅
 
 ## Immediate Next Steps
 
@@ -29,8 +30,10 @@ This document outlines the planned next steps for BayunDB development.
    - Add subquery support
 
 2. **ACID Transaction Support**
-   - WAL (Write-Ahead Log) implementation
-   - Transaction manager
+   - WAL (Write-Ahead Log) implementation ✅
+   - Transaction manager ✅
+   - Basic recovery implementation ✅
+   - Full ARIES-style recovery with transaction rollback (partially implemented)
    - Isolation level support
    - Deadlock detection and prevention
 

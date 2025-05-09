@@ -147,6 +147,19 @@ The buffer pool benchmarks measure page access patterns and analyze the effectiv
 - **Sequential Access**: Tests accessing pages in sequential order with different buffer pool sizes (10, 100, 1000 pages)
 - **Random Access**: Tests random page access patterns with different buffer pool sizes
 
+### B+Tree Index Benchmarks
+
+Tests B+Tree operations including insertion, lookup, and range scans.
+
+### Transaction and Recovery Benchmarks
+
+The recovery benchmarks measure the performance of the WAL (Write-Ahead Log) system and recovery process:
+
+- **WAL Append Performance**: Measures the throughput of transaction logging with different operation counts and sync settings
+- **Recovery Time**: Evaluates the time needed to recover after a crash with different workload sizes
+- **Checkpoint Performance**: Tests the overhead of creating checkpoints with varying log sizes
+- **Recovery with Checkpoints**: Measures recovery performance with different checkpoint frequencies
+
 Run the benchmarks:
 
 ```bash
@@ -155,16 +168,17 @@ cargo bench
 
 # Run a specific benchmark
 cargo bench --bench buffer_pool_bench
+cargo bench --bench recovery_bench
 
 # Run with HTML report generation
 cargo bench -- --output-format=bencher
 ```
 
-Benchmark results show performance characteristics under different access patterns:
+Benchmark results show performance characteristics under different access patterns and recovery scenarios:
 
-- The LRU replacement policy provides better performance for sequential access with larger buffer pools
-- Random access patterns benefit from larger buffer pools but show higher latency compared to sequential patterns when the working set exceeds buffer size
-- Performance scales linearly with buffer pool size for workloads that fit in the buffer pool
+- WAL performance varies significantly based on whether synchronous flushing is enabled
+- Recovery time improves with checkpoint frequency but with diminishing returns
+- Transaction throughput is affected by the logging and checkpoint frequency
 
 ### Benchmark Implementation Details
 
@@ -172,7 +186,10 @@ The benchmarks are implemented in the `benches/` directory:
 
 ```
 benches/
-└── buffer_pool_bench.rs    # Buffer pool access pattern benchmarks
+├── buffer_pool_bench.rs    # Buffer pool access pattern benchmarks
+├── btree_bench.rs          # B+Tree operation benchmarks
+├── transaction_bench.rs    # Transaction operation benchmarks
+└── recovery_bench.rs       # WAL and recovery performance benchmarks
 ```
 
 Each benchmark:

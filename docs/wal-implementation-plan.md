@@ -99,19 +99,23 @@ Each log record will contain:
 
 ### Phase 3: Recovery (Weeks 5-6)
 
-1. **Analysis Phase**
-   - Scan log to identify active transactions at crash time
-   - Build dirty page table and recovery info
+1. **Basic Recovery Infrastructure** ✅
+   - Log record iterator for scanning logs
+   - Analysis phase to identify active transactions
+   - Redo phase for reconstructing pages
+   - Basic dirty page tracking 
 
-2. **Redo Phase**
-   - Replay all actions from last checkpoint
-   - Restore database state as of crash time
-   - Handle partial page updates
+2. **Advanced Recovery** (In Progress)
+   - Checkpointing mechanism ✅
+   - Undo phase to rollback uncommitted transactions (partially implemented)
+   - Full ARIES-style recovery
 
-3. **Undo Phase**
-   - Roll back uncommitted transactions
-   - Clean up incomplete operations
-   - Restore database to consistent state
+3. **Performance Tests** ✅
+   - Measure throughput with WAL enabled vs. disabled
+   - Test recovery time with different log sizes/checkpoint frequencies
+   - Benchmark different flushing policies
+   - Measure space overhead
+   - Implementation complete in `benches/recovery_bench.rs`
 
 ## Testing Strategy
 
@@ -132,6 +136,7 @@ Each log record will contain:
    - Test recovery time with different log sizes/checkpoint frequencies
    - Benchmark different flushing policies
    - Measure space overhead
+   - Implementation complete in `benches/recovery_bench.rs`
 
 ## Key Interfaces
 

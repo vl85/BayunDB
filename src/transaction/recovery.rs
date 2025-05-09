@@ -12,6 +12,10 @@ use crate::transaction::wal::log_manager::LogManager;
 use crate::storage::buffer::BufferPoolManager;
 
 /// Transaction Recovery Manager for coordinating recovery across components
+///
+/// NOTE: Transaction rollback during recovery is not fully implemented yet.
+/// The current implementation replays WAL records, but does not roll back uncommitted 
+/// transactions. Future versions will fully implement ARIES-style recovery.
 pub struct TransactionRecoveryManager {
     wal_recovery: RecoveryManager,
     buffer_pool: Arc<BufferPoolManager>,

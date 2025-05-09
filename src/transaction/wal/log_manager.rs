@@ -675,6 +675,43 @@ impl LogManager {
         
         Ok(lsn)
     }
+    
+    /// Abort a transaction with the given ID and previous LSN
+    pub fn abort_transaction(&self, txn_id: u32, prev_lsn: u64) -> Result<u64> {
+        // Create an abort record
+        let abort_content = LogRecordContent::Transaction(TransactionOperationContent {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            metadata: None,
+        });
+        
+        // Append the abort record to the log
+        self.append_log_record(txn_id, prev_lsn, LogRecordType::Abort, abort_content)
+    }
+    
+    /// Get all log records for a specific transaction
+    pub fn get_transaction_records(&self, txn_id: u32) -> Result<Vec<LogRecord>> {
+        let mut records = Vec::new();
+        
+        // Create an iterator starting from the beginning (or last checkpoint)
+        let iterator = self.get_log_iterator_from_checkpoint()?;
+        
+        // Collect all records for the specified transaction
+        for record_result in iterator {
+            match record_result {
+                Ok(record) => {
+                    if record.txn_id == txn_id {
+                        records.push(record);
+                    }
+                },
+                Err(e) => return Err(e),
+            }
+        }
+        
+        Ok(records)
+    }
 }
 
 /// Iterator over log records

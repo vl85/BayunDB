@@ -283,4 +283,55 @@ impl PageManager {
         // Serialize the header to bytes
         header.to_bytes().to_vec()
     }
+
+    /// Insert a record at a specific RID (for recovery)
+    /// This is primarily used during recovery to restore a record to its original location
+    pub fn insert_record_at(&self, page: &mut Page, rid: Rid, data: &[u8]) -> Result<(), PageError> {
+        let mut header = self.get_header(page);
+        
+        // Check if the RID is valid
+        if rid >= header.record_count {
+            return Err(PageError::InvalidRecordId);
+        }
+        
+        // Get the slot position
+        let slot_pos = self.get_slot_position(rid, header.record_count);
+        let record_loc = self.get_record_location(page, slot_pos);
+        
+        // Check if the record already exists
+        if record_loc.length > 0 {
+            return Err(PageError::DuplicateRecord);
+        }
+        
+        // Record size
+        let record_size = data.len() as u32;
+        
+        // Check if there's enough space
+        if header.free_space_size < record_size {
+            return Err(PageError::InsufficientSpace);
+        }
+        
+        // Write the record data at the current free space offset
+        let data_end = header.free_space_offset as usize + data.len();
+        page.data[header.free_space_offset as usize..data_end].copy_from_slice(data);
+        
+        // Update the record location
+        let new_record_loc = RecordLocation {
+            offset: header.free_space_offset,
+            length: record_size,
+        };
+        
+        let slot_bytes = new_record_loc.to_bytes();
+        page.data[slot_pos..slot_pos+RECORD_OFFSET_SIZE].copy_from_slice(&slot_bytes);
+        
+        // Update header
+        header.free_space_offset += record_size;
+        header.free_space_size -= record_size;
+        
+        // Write updated header
+        let header_bytes = header.to_bytes();
+        page.data[0..HEADER_SIZE].copy_from_slice(&header_bytes);
+        
+        Ok(())
+    }
 } 
