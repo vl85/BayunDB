@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use crate::query::executor::operators::{Operator, create_table_scan, create_filter, create_projection, 
-    create_nested_loop_join, create_hash_join};
+    create_nested_loop_join, create_hash_join, create_hash_aggregate};
 use crate::query::executor::result::QueryResult;
 use crate::query::parser::ast::{Expression, JoinType};
 use crate::query::planner::logical::LogicalPlan;
@@ -62,6 +62,17 @@ pub enum PhysicalPlan {
         /// Join type
         join_type: JoinType,
     },
+    /// Hash Aggregate operator
+    HashAggregate {
+        /// Input plan
+        input: Box<PhysicalPlan>,
+        /// Group by expressions
+        group_by: Vec<Expression>,
+        /// Aggregate expressions (COUNT, SUM, etc.)
+        aggregate_expressions: Vec<Expression>,
+        /// Having clause (optional)
+        having: Option<Expression>,
+    },
 }
 
 impl fmt::Display for PhysicalPlan {
@@ -90,6 +101,29 @@ impl fmt::Display for PhysicalPlan {
             PhysicalPlan::HashJoin { left, right, condition, join_type } => {
                 write!(f, "HashJoin ({:?}): {:?}\n  Left: {}\n  Right: {}", 
                        join_type, condition, left, right)
+            }
+            PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
+                let agg_str = aggregate_expressions.iter()
+                    .map(|e| format!("{:?}", e))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                
+                let group_by_str = if group_by.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" GROUP BY [{}]", group_by.iter()
+                        .map(|e| format!("{:?}", e))
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                };
+                
+                let having_str = if let Some(having_expr) = having {
+                    format!(" HAVING {:?}", having_expr)
+                } else {
+                    "".to_string()
+                };
+                
+                write!(f, "HashAggregate: [{}]{}{}\n  {}", agg_str, group_by_str, having_str, input)
             }
         }
     }
@@ -160,6 +194,19 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
                 }
             }
         }
+        LogicalPlan::Aggregate { input, group_by, aggregate_expressions, having } => {
+            // Convert the input to a physical plan
+            let physical_input = create_physical_plan(input);
+            
+            // Create the hash aggregate operator
+            // For now, we always use hash aggregation (could also implement sort-based aggregation)
+            PhysicalPlan::HashAggregate {
+                input: Box::new(physical_input),
+                group_by: group_by.clone(),
+                aggregate_expressions: aggregate_expressions.clone(),
+                having: having.clone(),
+            }
+        }
     }
 }
 
@@ -200,7 +247,7 @@ pub fn build_operator_tree(plan: &PhysicalPlan) -> QueryResult<Arc<Mutex<dyn Ope
             let condition_str = expression_to_predicate(condition);
             
             // Determine if this is a left join
-            let is_left_join = *join_type == JoinType::LeftOuter;
+            let is_left_join = matches!(join_type, JoinType::LeftOuter);
             
             // Create the nested loop join operator
             create_nested_loop_join(left_op, right_op, condition_str, is_left_join)
@@ -214,10 +261,35 @@ pub fn build_operator_tree(plan: &PhysicalPlan) -> QueryResult<Arc<Mutex<dyn Ope
             let condition_str = expression_to_predicate(condition);
             
             // Determine if this is a left join
-            let is_left_join = *join_type == JoinType::LeftOuter;
+            let is_left_join = matches!(join_type, JoinType::LeftOuter);
             
             // Create the hash join operator
             create_hash_join(left_op, right_op, condition_str, is_left_join)
+        }
+        PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
+            // Build the input operator
+            let input_op = build_operator_tree(input)?;
+            
+            // Convert expressions to strings for now
+            // This is a simplified approach - in a real system, we'd have a more 
+            // sophisticated mechanism to evaluate expressions
+            
+            // Convert group_by expressions to strings
+            let group_by_columns = group_by.iter()
+                .map(|expr| format!("{:?}", expr))
+                .collect();
+                
+            // Convert aggregate expressions to strings
+            let agg_expr_strings = aggregate_expressions.iter()
+                .map(|expr| format!("{:?}", expr))
+                .collect();
+                
+            // Convert having clause if present
+            let having_str = having.as_ref()
+                .map(|expr| format!("{:?}", expr));
+                
+            // Create the hash aggregate operator
+            create_hash_aggregate(input_op, group_by_columns, agg_expr_strings, having_str)
         }
     }
 }
@@ -271,6 +343,15 @@ pub fn add_materialization(plan: PhysicalPlan) -> PhysicalPlan {
                 join_type,
             }
         }
+        PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
+            // Add materialization to the input
+            PhysicalPlan::HashAggregate {
+                input: Box::new(add_materialization(*input)),
+                group_by: group_by.clone(),
+                aggregate_expressions: aggregate_expressions.clone(),
+                having: having.clone(),
+            }
+        }
         // Base case - no materialization needed
         _ => plan,
     }
@@ -308,6 +389,10 @@ impl CostModel {
                 // Hash joins are cheaper than nested loop - cost is sum plus overhead
                 75.0 + Self::estimate_cost(left) + Self::estimate_cost(right)
             }
+            PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
+                // Hash aggregation adds some overhead
+                100.0 + Self::estimate_cost(input)
+            }
         }
     }
 }
@@ -315,7 +400,8 @@ impl CostModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::parser::ast::{ColumnReference, Value, Operator as AstOperator};
+    use crate::query::parser::ast::{ColumnReference, Value, Operator as AstOperator, AggregateFunction, TableReference, SelectStatement, SelectColumn};
+    use crate::query::planner::logical::build_logical_plan;
     
     #[test]
     fn test_simple_physical_plan() {
@@ -406,6 +492,101 @@ mod tests {
                 }
             }
             _ => panic!("Expected Project as the physical plan"),
+        }
+    }
+    
+    #[test]
+    fn test_aggregate_physical_plan() {
+        // Create a SELECT statement with GROUP BY and aggregate functions
+        let stmt = SelectStatement {
+            columns: vec![
+                SelectColumn::Column(ColumnReference {
+                    table: None,
+                    name: "department_id".to_string(),
+                }),
+                SelectColumn::Expression { 
+                    expr: Box::new(Expression::Aggregate { 
+                        function: AggregateFunction::Count, 
+                        arg: None,
+                    }),
+                    alias: Some("count".to_string()),
+                },
+                SelectColumn::Expression { 
+                    expr: Box::new(Expression::Aggregate { 
+                        function: AggregateFunction::Sum, 
+                        arg: Some(Box::new(Expression::Column(ColumnReference {
+                            table: None,
+                            name: "salary".to_string(),
+                        }))),
+                    }),
+                    alias: Some("total_salary".to_string()),
+                },
+            ],
+            from: vec![TableReference {
+                name: "employees".to_string(),
+                alias: None,
+            }],
+            where_clause: Some(Box::new(Expression::BinaryOp {
+                left: Box::new(Expression::Column(ColumnReference {
+                    table: None,
+                    name: "status".to_string(),
+                })),
+                op: AstOperator::Equals,
+                right: Box::new(Expression::Literal(Value::String("active".to_string()))),
+            })),
+            joins: vec![],
+            group_by: Some(vec![
+                Expression::Column(ColumnReference {
+                    table: None,
+                    name: "department_id".to_string(),
+                }),
+            ]),
+            having: Some(Box::new(Expression::BinaryOp {
+                left: Box::new(Expression::Aggregate { 
+                    function: AggregateFunction::Count, 
+                    arg: None,
+                }),
+                op: AstOperator::GreaterThan,
+                right: Box::new(Expression::Literal(Value::Integer(5))),
+            })),
+        };
+        
+        // Build logical plan
+        let logical_plan = build_logical_plan(&stmt);
+        
+        // Convert to physical plan
+        let physical_plan = create_physical_plan(&logical_plan);
+        
+        // Verify the structure matches our expectations
+        if let PhysicalPlan::Project { input, columns } = &physical_plan {
+            assert_eq!(columns.len(), 3); // department_id, count, total_salary
+            
+            if let PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } = &**input {
+                // Verify group by
+                assert_eq!(group_by.len(), 1);
+                
+                // Verify aggregate expressions
+                assert_eq!(aggregate_expressions.len(), 2); // COUNT, SUM
+                
+                // Verify having clause
+                assert!(having.is_some());
+                
+                // Verify input is a Filter
+                if let PhysicalPlan::Filter { input, .. } = &**input {
+                    // Verify filter input is a SeqScan
+                    if let PhysicalPlan::SeqScan { table_name, .. } = &**input {
+                        assert_eq!(table_name, "employees");
+                    } else {
+                        panic!("Expected SeqScan operation under Filter");
+                    }
+                } else {
+                    panic!("Expected Filter operation under HashAggregate");
+                }
+            } else {
+                panic!("Expected HashAggregate operation under Project");
+            }
+        } else {
+            panic!("Expected Project as root operation");
         }
     }
 } 
