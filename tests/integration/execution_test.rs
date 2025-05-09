@@ -1,6 +1,13 @@
 use anyhow::{Result, anyhow};
 use bayundb::query::executor::result::DataValue;
 use bayundb::query::executor::operators::{create_table_scan, create_filter};
+use bayundb::query::executor::engine::ExecutionEngine;
+use std::sync::Arc;
+use tempfile::tempdir;
+use bayundb::storage::buffer::BufferPoolManager;
+use bayundb::storage::page::PageManager;
+use bayundb::index::btree::BTreeIndex;
+use bayundb::transaction::LogManager;
 
 /// Test to verify actual result rows from query execution with filter
 #[test]
@@ -55,6 +62,33 @@ fn test_result_rows() -> Result<()> {
     
     // Should return exactly 10 rows (ids 0-9) based on our mock scan operator
     assert_eq!(result_rows.len(), 10, "Expected exactly 10 result rows with ids < 10");
+    
+    Ok(())
+}
+
+/// Test CREATE TABLE execution - this test is commented out since CREATE TABLE
+/// is not yet implemented in the parser, but this test framework will be useful
+/// once that functionality is added.
+#[test]
+#[ignore] // Ignoring this test until CREATE TABLE is implemented
+fn test_create_table_execution() -> Result<()> {
+    // Create a temporary directory for the test database
+    let temp_dir = tempdir()?;
+    let db_path = temp_dir.path().join("test_create_db.db");
+    let log_dir = temp_dir.path().join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+    
+    // Initialize the buffer pool
+    let buffer_pool = Arc::new(BufferPoolManager::new(
+        100, // buffer pool size
+        db_path.to_str().unwrap()
+    )?);
+    
+    // Create execution engine (only takes buffer_pool as parameter)
+    let _engine = ExecutionEngine::new(buffer_pool.clone());
+    
+    // When CREATE TABLE is implemented, these tests will be relevant
+    // For now, we'll just verify the engine can be created
     
     Ok(())
 }

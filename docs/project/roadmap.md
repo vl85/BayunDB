@@ -26,6 +26,13 @@ This document outlines the planned development steps for BayunDB, organized by c
    - Transaction manager
    - Basic recovery implementation
 
+4. **Command Line Interface (CLI)**
+   - Interactive SQL shell with command history
+   - Direct query execution for scripting
+   - Database information display
+   - Database creation
+   - Formatted table output for query results
+
 ## Current Development Focus
 
 1. **Query Execution Enhancements**
@@ -54,6 +61,7 @@ This document outlines the planned development steps for BayunDB, organized by c
    - Build metadata storage system
    - Implement schema versioning
    - Add constraint management
+   - Implement DDL operations (CREATE TABLE, ALTER TABLE, DROP TABLE)
 
 ## Medium-term Goals
 
@@ -106,7 +114,8 @@ If you're interested in working on any of these features, please check our [Cont
 |-----------|-------------|--------------|
 | v0.1.0    | Completed   | Basic storage engine, B+Tree indexes |
 | v0.2.0    | Completed   | SQL parser, query planning and execution |
-| v0.3.0    | In Progress | ACID transactions, advanced indexing |
-| v0.4.0    | Q3 2023     | Server connection handling, client protocol |
-| v0.5.0    | Q4 2023     | Advanced SQL features, improved error handling |
-| v1.0.0    | Q2 2024     | Production-ready release with comprehensive documentation | 
+| v0.3.0    | Completed   | Command Line Interface (CLI), basic testing framework |
+| v0.4.0    | In Progress | ACID transactions, advanced indexing, DDL operations |
+| v0.5.0    | Q1 2024     | Server connection handling, client protocol |
+| v0.6.0    | Q2 2024     | Advanced SQL features, improved error handling |
+| v1.0.0    | Q4 2024     | Production-ready release with comprehensive documentation | 

@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use bayundb::query::parser::Parser;
 use bayundb::query::parser::ast::{Statement, Expression, Operator};
+use bayundb::query::parser::parser::ParseError;
 
 #[test]
 fn test_simple_select_query() -> Result<()> {
@@ -28,6 +29,28 @@ fn test_simple_select_query() -> Result<()> {
         }
     } else {
         panic!("Expected SELECT statement");
+    }
+    
+    Ok(())
+}
+
+#[test]
+fn test_create_table_statement() -> Result<()> {
+    // Test CREATE TABLE parser functionality
+    let sql = "CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN)";
+    let mut parser = Parser::new(sql);
+    
+    // Currently CREATE TABLE is not implemented, so we expect an error
+    let result = parser.parse_statement();
+    
+    // The parser should return an error indicating CREATE is not implemented
+    assert!(result.is_err(), "CREATE TABLE should return an error since it's not implemented");
+    
+    if let Err(ParseError::InvalidSyntax(msg)) = result {
+        assert!(msg.contains("CREATE not implemented"), 
+                "Error should indicate CREATE is not implemented");
+    } else {
+        panic!("Expected InvalidSyntax error for unimplemented CREATE statement");
     }
     
     Ok(())
@@ -83,6 +106,19 @@ fn test_invalid_predicate() -> Result<()> {
     } else {
         panic!("Expected SELECT statement");
     }
+    
+    Ok(())
+}
+
+// Test error handling for CREATE TABLE
+#[test]
+fn test_invalid_create_table() -> Result<()> {
+    // Test CREATE TABLE with syntax error
+    let sql = "CREATE TABLE users id INTEGER, name TEXT)"; // Missing opening parenthesis
+    let mut parser = Parser::new(sql);
+    
+    let result = parser.parse_statement();
+    assert!(result.is_err(), "Expected parser to fail with syntax error");
     
     Ok(())
 } 

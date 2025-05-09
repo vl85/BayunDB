@@ -1,8 +1,7 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::process::{Command, Stdio};
 use std::io::Write;
 use tempfile::NamedTempFile;
-use std::path::PathBuf;
 use std::fs;
 
 /// Test that the CLI can be launched with basic info command
@@ -150,6 +149,104 @@ fn test_cli_help_output() -> Result<()> {
     assert!(output_str.contains("Usage:"), "Help usage section not found");
     assert!(output_str.contains("Options:"), "Help options section not found");
     assert!(output_str.contains("Commands:"), "Help commands section not found");
+    
+    Ok(())
+}
+
+/// Test that the CLI handles CREATE TABLE statements appropriately
+#[test]
+fn test_cli_create_table() -> Result<()> {
+    // Build the CLI binary
+    let status = Command::new("cargo")
+        .args(["build", "--bin", "bnql"])
+        .status()?;
+    
+    assert!(status.success(), "Failed to build bnql binary");
+    
+    // Create a temporary database file
+    let temp_dir = tempfile::tempdir()?;
+    let db_path = temp_dir.path().join("test_create.db");
+    let log_dir = temp_dir.path().join("logs");
+    fs::create_dir_all(&log_dir)?;
+    
+    // Create a temporary file with SQL commands
+    let mut input_file = NamedTempFile::new()?;
+    
+    // Write CREATE TABLE command
+    writeln!(input_file, "CREATE TABLE test_products (id INTEGER, name TEXT, price FLOAT);")?;
+    
+    // Exit command
+    writeln!(input_file, "exit")?;
+    input_file.flush()?;
+    
+    // Run the CLI in shell mode with input redirection
+    let output = Command::new("target/debug/bnql")
+        .args([
+            "--db-path", &db_path.to_string_lossy(),
+            "--log-dir", &log_dir.to_string_lossy(),
+        ])
+        .stdin(Stdio::from(input_file.reopen()?))
+        .output()?;
+    
+    assert!(output.status.success(), "CLI create table interaction should not crash");
+    
+    let output_str = String::from_utf8(output.stdout)?;
+    
+    // Since CREATE TABLE is not implemented yet in the parser,
+    // we expect an error message indicating the feature is not implemented
+    assert!(output_str.contains("Error") || 
+            output_str.contains("not implemented"), 
+            "Expected error message for unimplemented CREATE TABLE");
+    
+    Ok(())
+}
+
+/// Test CREATE TABLE error handling in CLI
+#[test]
+fn test_cli_create_table_errors() -> Result<()> {
+    // Build the CLI binary
+    let status = Command::new("cargo")
+        .args(["build", "--bin", "bnql"])
+        .status()?;
+    
+    assert!(status.success(), "Failed to build bnql binary");
+    
+    // Create a temporary database file
+    let temp_dir = tempfile::tempdir()?;
+    let db_path = temp_dir.path().join("test_create_error.db");
+    let log_dir = temp_dir.path().join("logs");
+    fs::create_dir_all(&log_dir)?;
+    
+    // Create a temporary file with SQL commands with errors
+    let mut input_file = NamedTempFile::new()?;
+    
+    // Two different CREATE TABLE commands (should both fail since feature isn't implemented)
+    writeln!(input_file, "CREATE TABLE users (id INTEGER, name TEXT);")?;
+    writeln!(input_file, "CREATE TABLE products (id INTEGER, name TEXT, price FLOAT);")?;
+    
+    // Exit command
+    writeln!(input_file, "exit")?;
+    input_file.flush()?;
+    
+    // Run the CLI in shell mode with input redirection
+    let output = Command::new("target/debug/bnql")
+        .args([
+            "--db-path", &db_path.to_string_lossy(),
+            "--log-dir", &log_dir.to_string_lossy(),
+        ])
+        .stdin(Stdio::from(input_file.reopen()?))
+        .output()?;
+    
+    assert!(output.status.success(), "CLI should not crash with CREATE TABLE commands");
+    
+    let output_str = String::from_utf8(output.stdout)?;
+    
+    // Check for error messages
+    // We expect to see at least two error messages since we tried CREATE TABLE twice
+    let error_count = output_str.matches("Error").count() + 
+                     output_str.matches("not implemented").count();
+    
+    assert!(error_count >= 2, "Expected at least two error messages for CREATE TABLE commands");
     
     Ok(())
 } 
