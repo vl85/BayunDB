@@ -23,6 +23,18 @@ harness = false
 name = "query_parser_bench"
 harness = false
 
+[[bench]]
+name = "transaction_bench"
+harness = false
+
+[[bench]]
+name = "query_execution_bench"
+harness = false
+
+[[bench]]
+name = "table_operations_bench"
+harness = false
+
 [[test]]
 name = "parser_test"
 path = "tests/integration/parser_test.rs"

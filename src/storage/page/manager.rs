@@ -274,4 +274,13 @@ impl PageManager {
     fn get_record_location(&self, page: &Page, slot_pos: usize) -> RecordLocation {
         RecordLocation::from_bytes(&page.data[slot_pos..slot_pos+RECORD_OFFSET_SIZE])
     }
+
+    /// Get raw page header bytes for WAL logging
+    pub fn get_raw_page_header(&self, page: &Page) -> Vec<u8> {
+        // Get the page header
+        let header = self.get_header(page);
+        
+        // Serialize the header to bytes
+        header.to_bytes().to_vec()
+    }
 } 

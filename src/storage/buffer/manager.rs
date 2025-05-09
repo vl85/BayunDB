@@ -4,10 +4,12 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use anyhow::Result;
 
-use crate::common::types::{Page, PageId, PagePtr, Frame, FrameId, FramePtr};
+use crate::common::types::{Page, PageId, PagePtr, Frame, FrameId, FramePtr, Lsn, TxnId};
 use crate::storage::disk::DiskManager;
 use crate::storage::buffer::error::BufferPoolError;
 use crate::storage::buffer::replacer::LRUReplacer;
+use crate::transaction::Transaction;
+use crate::transaction::wal::log_manager::LogManager;
 
 const INVALID_PAGE_ID: PageId = 0;
 
@@ -19,6 +21,7 @@ pub struct BufferPoolManager {
     replacer: RwLock<LRUReplacer>,
     disk_manager: Arc<DiskManager>,
     next_page_id: RwLock<PageId>,
+    log_manager: Option<Arc<LogManager>>,
 }
 
 impl BufferPoolManager {
@@ -42,7 +45,16 @@ impl BufferPoolManager {
             replacer: RwLock::new(LRUReplacer::new(pool_size)),
             disk_manager,
             next_page_id: RwLock::new(1), // Start with page ID 1
+            log_manager: None,
         })
+    }
+    
+    /// Create a new buffer pool manager with WAL support
+    pub fn new_with_wal(pool_size: usize, db_path: impl AsRef<Path>, 
+                         log_manager: Arc<LogManager>) -> Result<Self, BufferPoolError> {
+        let mut pool = Self::new(pool_size, db_path)?;
+        pool.log_manager = Some(log_manager);
+        Ok(pool)
     }
 
     /// Fetch a page from the buffer pool or disk
@@ -78,6 +90,7 @@ impl BufferPoolManager {
             let frame = &self.frames[frame_id as usize];
             let dirty;
             let page_to_write;
+            let lsn: Lsn;
             
             // Check if the frame contains a dirty page
             {
@@ -85,13 +98,20 @@ impl BufferPoolManager {
                 dirty = frame_guard.is_dirty;
                 if dirty {
                     page_to_write = frame_guard.page.read().clone();
+                    lsn = page_to_write.lsn;
                 } else {
                     page_to_write = Page::new(0); // Dummy page, won't be used
+                    lsn = 0;
                 }
             }
             
-            // Write dirty page to disk if needed
+            // Write dirty page to disk if needed - WAL rule: must flush log before writing page
             if dirty {
+                // Ensure WAL records are flushed up to page's LSN before writing page
+                if let Some(ref log_manager) = self.log_manager {
+                    log_manager.flush_till_lsn(lsn)?;
+                }
+                
                 self.disk_manager.write_page(&page_to_write)?;
             }
         }
@@ -124,6 +144,66 @@ impl BufferPoolManager {
         Ok(frame_guard.page.clone())
     }
 
+    /// Create a new page with transaction support
+    pub fn new_page_with_txn(&self, txn: &Transaction) -> Result<(PagePtr, PageId), BufferPoolError> {
+        // Allocate a new page ID from disk manager
+        let page_id = self.disk_manager.allocate_page()?;
+        
+        // Allocate a frame for the new page
+        let frame_id = self.allocate_frame()?;
+        let frame = &self.frames[frame_id as usize];
+        
+        {
+            let mut frame_guard = frame.write();
+            
+            // If frame contains a dirty page, flush it first - with WAL protection
+            if frame_guard.is_dirty {
+                let page_guard = frame_guard.page.read();
+                
+                // Ensure WAL records are flushed up to page's LSN before writing page
+                if let Some(ref log_manager) = self.log_manager {
+                    log_manager.flush_till_lsn(page_guard.lsn)?;
+                }
+                
+                self.disk_manager.write_page(&page_guard)?;
+            }
+            
+            // Initialize the new page
+            {
+                let mut page_guard = frame_guard.page.write();
+                *page_guard = Page::new(page_id);
+                self.disk_manager.page_manager().init_page(&mut page_guard);
+                
+                // Log the page creation operation (create a "page header" record)
+                // This is purely for recovery purposes
+                if let Some(_) = self.log_manager {
+                    // Extract page header for logging
+                    let header_bytes = self.disk_manager.page_manager().get_raw_page_header(&page_guard);
+                    
+                    // Log the page initialization - this updates the LSN on the page
+                    let lsn = txn.log_insert(0, page_id, 0, &header_bytes)?;
+                    page_guard.lsn = lsn;
+                }
+            }
+            
+            // Update frame metadata
+            frame_guard.pin_count = 1;
+            frame_guard.is_dirty = true;
+        }
+        
+        // Update page table and LRU replacer
+        {
+            let mut page_table = self.page_table.write();
+            page_table.insert(page_id, frame_id);
+            
+            self.replacer.write().record_access(frame_id);
+        }
+        
+        // Return the page
+        let frame_guard = frame.read();
+        Ok((frame_guard.page.clone(), page_id))
+    }
+
     /// Create a new page
     pub fn new_page(&self) -> Result<(PagePtr, PageId), BufferPoolError> {
         // Allocate a new page ID from disk manager
@@ -136,9 +216,15 @@ impl BufferPoolManager {
         {
             let mut frame_guard = frame.write();
             
-            // If frame contains a dirty page, flush it first
+            // If frame contains a dirty page, flush it first - with WAL protection
             if frame_guard.is_dirty {
                 let page_guard = frame_guard.page.read();
+                
+                // Ensure WAL records are flushed up to page's LSN before writing page
+                if let Some(ref log_manager) = self.log_manager {
+                    log_manager.flush_till_lsn(page_guard.lsn)?;
+                }
+                
                 self.disk_manager.write_page(&page_guard)?;
             }
             
@@ -167,8 +253,10 @@ impl BufferPoolManager {
         Ok((frame_guard.page.clone(), page_id))
     }
 
-    /// Unpin a page, potentially marking it as dirty
-    pub fn unpin_page(&self, page_id: PageId, is_dirty: bool) -> Result<(), BufferPoolError> {
+    /// Unpin a page with transaction support
+    pub fn unpin_page_with_txn(&self, page_id: PageId, is_dirty: bool, 
+                              txn: Option<&Transaction>, lsn: Option<Lsn>) 
+                             -> Result<(), BufferPoolError> {
         if page_id == INVALID_PAGE_ID {
             return Err(BufferPoolError::InvalidOperation("Cannot unpin invalid page ID".to_string()));
         }
@@ -182,7 +270,7 @@ impl BufferPoolManager {
             }
         };
         
-        // Update the pin count and dirty flag
+        // Update the pin count, dirty flag, and LSN 
         let pin_count = {
             let frame = &self.frames[frame_id as usize];
             let mut frame_guard = frame.write();
@@ -192,24 +280,36 @@ impl BufferPoolManager {
                 frame_guard.pin_count -= 1;
             }
             
-            // Mark as dirty if requested
+            // Mark as dirty if requested, and update LSN if provided
             if is_dirty {
                 frame_guard.is_dirty = true;
+                
+                // If transaction and LSN are provided, update the page's LSN
+                if let (Some(_), Some(record_lsn)) = (txn, lsn) {
+                    let mut page_guard = frame_guard.page.write();
+                    page_guard.lsn = record_lsn;
+                }
             }
             
             // Return the new pin count
             frame_guard.pin_count
         };
         
-        // If pin count is now 0, make it available for replacement
+        // If pin count is zero, page can be evicted, add to replacer
         if pin_count == 0 {
-            self.replacer.write().record_access(frame_id);
+            let mut replacer = self.replacer.write();
+            replacer.record_access(frame_id);
         }
         
         Ok(())
     }
 
-    /// Flush a specific page to disk
+    /// Unpin a page, potentially marking it as dirty
+    pub fn unpin_page(&self, page_id: PageId, is_dirty: bool) -> Result<(), BufferPoolError> {
+        self.unpin_page_with_txn(page_id, is_dirty, None, None)
+    }
+    
+    /// Flush a page to disk with WAL support
     pub fn flush_page(&self, page_id: PageId) -> Result<(), BufferPoolError> {
         if page_id == INVALID_PAGE_ID {
             return Err(BufferPoolError::InvalidOperation("Cannot flush invalid page ID".to_string()));
@@ -224,28 +324,28 @@ impl BufferPoolManager {
             }
         };
         
-        // Check if the page is dirty and get a copy if needed
+        // Get the page and write to disk
         let frame = &self.frames[frame_id as usize];
-        let needs_flush;
-        let page_copy;
+        let page_to_write;
+        let lsn;
         
         {
             let frame_guard = frame.read();
-            needs_flush = frame_guard.is_dirty;
-            
-            if needs_flush {
-                page_copy = frame_guard.page.read().clone();
-            } else {
-                page_copy = Page::new(0); // Dummy page, won't be used
-            }
+            let page_guard = frame_guard.page.read();
+            page_to_write = page_guard.clone();
+            lsn = page_guard.lsn;
         }
         
-        // Flush to disk if needed
-        if needs_flush {
-            // Write the page to disk
-            self.disk_manager.write_page(&page_copy)?;
-            
-            // Update the dirty flag
+        // WAL rule: flush log records before writing page to disk
+        if let Some(ref log_manager) = self.log_manager {
+            log_manager.flush_till_lsn(lsn)?;
+        }
+        
+        // Write the page to disk
+        self.disk_manager.write_page(&page_to_write)?;
+        
+        // Clear the dirty flag
+        {
             let mut frame_guard = frame.write();
             frame_guard.is_dirty = false;
         }
@@ -253,100 +353,121 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    /// Flush all pages in the buffer pool to disk
+    /// Flush all dirty pages to disk
     pub fn flush_all_pages(&self) -> Result<(), BufferPoolError> {
-        let page_table = self.page_table.read();
+        // Flush log manager first to ensure durability
+        if let Some(ref log_manager) = self.log_manager {
+            log_manager.flush()?;
+        }
         
-        for (&page_id, _) in page_table.iter() {
+        // Get all page IDs from the page table
+        let page_ids: Vec<PageId> = {
+            let page_table = self.page_table.read();
+            page_table.keys().cloned().collect()
+        };
+        
+        // Flush each page
+        for page_id in page_ids {
             self.flush_page(page_id)?;
         }
         
         Ok(())
     }
-
-    /// Delete a page from the buffer pool and disk
+    
+    /// Delete a page from the buffer pool
     pub fn delete_page(&self, page_id: PageId) -> Result<(), BufferPoolError> {
         if page_id == INVALID_PAGE_ID {
             return Err(BufferPoolError::InvalidOperation("Cannot delete invalid page ID".to_string()));
         }
         
-        // Check if the page is in the buffer pool
-        let frame_id_opt = {
+        // Find the frame containing this page
+        let frame_id = {
             let mut page_table = self.page_table.write();
-            page_table.remove(&page_id)
+            match page_table.remove(&page_id) {
+                Some(id) => id,
+                None => return Ok(()), // Page not in buffer pool, nothing to do
+            }
         };
         
-        // If found in buffer pool, reset the frame
-        if let Some(frame_id) = frame_id_opt {
-            let frame = &self.frames[frame_id as usize];
-            let mut frame_guard = frame.write();
+        // Get the frame and check if it's safe to delete
+        let frame = &self.frames[frame_id as usize];
+        let pin_count = {
+            let frame_guard = frame.read();
             
-            // Only delete if not pinned
+            // Cannot delete if page is pinned
             if frame_guard.pin_count > 0 {
-                // Reinsert into page table since we can't delete it now
-                self.page_table.write().insert(page_id, frame_id);
-                return Err(BufferPoolError::InvalidOperation(
-                    format!("Cannot delete page {} because it is pinned", page_id)
-                ));
+                return Err(BufferPoolError::PagePinned(page_id));
             }
             
-            // Reset the frame
-            {
-                let mut page_guard = frame_guard.page.write();
-                *page_guard = Page::new(INVALID_PAGE_ID);
-            }
-            
-            frame_guard.is_dirty = false;
-            frame_guard.pin_count = 0;
-            
-            // Add the frame to the free list
-            drop(frame_guard); // Release lock before modifying free list
-            self.replacer.write().remove(frame_id);
-            self.free_list.write().push_back(frame_id);
-        }
+            frame_guard.pin_count
+        };
         
-        // Note: In a real system, we would also update disk metadata 
-        // to mark this page as free for future allocation
+        if pin_count == 0 {
+            // Reset the frame to hold an invalid page
+            {
+                let mut frame_guard = frame.write();
+                {
+                    let mut page_guard = frame_guard.page.write();
+                    *page_guard = Page::new(INVALID_PAGE_ID);
+                }
+                // Now page_guard is dropped, we can modify frame_guard
+                frame_guard.is_dirty = false;
+                frame_guard.pin_count = 0;
+            }
+            
+            // Remove from replacer and add to free list
+            {
+                let mut replacer = self.replacer.write();
+                replacer.remove(frame_id); // Remove from replacer
+                
+                // Add to free list
+                self.free_list.write().push_back(frame_id);
+            }
+        }
         
         Ok(())
     }
-
-    /// Allocate a frame, either from the free list or by page replacement
+    
+    /// Allocate a frame for a new page
     fn allocate_frame(&self) -> Result<FrameId, BufferPoolError> {
         // Try to get a frame from the free list first
-        if let Some(frame_id) = self.free_list.write().pop_front() {
-            return Ok(frame_id);
+        {
+            let mut free_list = self.free_list.write();
+            if let Some(frame_id) = free_list.pop_front() {
+                return Ok(frame_id);
+            }
         }
         
-        // No free frames, try to find a victim using the replacer
-        if let Some(victim_id) = self.replacer.write().victim() {
-            // Check if the frame is unpinned and get the page ID
-            let frame = &self.frames[victim_id as usize];
-            
-            // Get page ID and check if unpinned
-            let page_id;
-            {
-                let frame_guard = frame.read();
-                
-                // Check pin count
-                if frame_guard.pin_count > 0 {
-                    return Err(BufferPoolError::BufferPoolFull);
-                }
-                
-                // Get page ID
-                let page_guard = frame_guard.page.read();
-                page_id = page_guard.page_id;
+        // No frames in free list, need to evict a page
+        let frame_id = {
+            let mut replacer = self.replacer.write();
+            match replacer.victim() {
+                Some(id) => id,
+                None => return Err(BufferPoolError::NoFreeFrames),
             }
+        };
+        
+        // Remove the evicted page from the page table
+        {
+            let frame = &self.frames[frame_id as usize];
+            let page_id = frame.read().page.read().page_id;
             
-            // Remove page from page table if valid
+            // Only remove from page table if it's a valid page
             if page_id != INVALID_PAGE_ID {
                 self.page_table.write().remove(&page_id);
             }
-            
-            return Ok(victim_id);
         }
         
-        // Buffer pool is full (all frames are pinned)
-        Err(BufferPoolError::BufferPoolFull)
+        Ok(frame_id)
+    }
+    
+    /// Get a reference to the log manager, if available
+    pub fn log_manager(&self) -> Option<Arc<LogManager>> {
+        self.log_manager.clone()
+    }
+
+    /// Get a reference to the disk manager
+    pub fn disk_manager(&self) -> Arc<DiskManager> {
+        self.disk_manager.clone()
     }
 } 

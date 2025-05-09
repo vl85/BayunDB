@@ -33,7 +33,7 @@ fn btree_benchmark(c: &mut Criterion) {
             
             // Generate random keys to insert
             let mut rng = rand::thread_rng();
-            let keys: Vec<i32> = (0..size).map(|_| rng.gen::<i32>()).collect();
+            let keys: Vec<i32> = (0..size).map(|_| rng.r#gen::<i32>()).collect();
             let mut idx = 0;
             
             // Benchmark inserting keys

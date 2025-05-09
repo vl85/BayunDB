@@ -1,6 +1,6 @@
+pub mod error;
+pub mod manager;
 mod replacer;
-mod manager;
-mod error;
 
-pub use manager::BufferPoolManager;
-pub use error::BufferPoolError; 
+pub use error::BufferPoolError;
+pub use manager::BufferPoolManager; 
