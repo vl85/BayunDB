@@ -60,13 +60,13 @@ impl PageManager {
         page.data[0..HEADER_SIZE].copy_from_slice(&header_bytes);
         
         // Return the record ID (slot index)
-        Ok(header.record_count - 1)
+        Ok(Rid::new(page.page_id, header.record_count - 1))
     }
 
     pub fn delete_record(&self, page: &mut Page, rid: Rid) -> Result<(), PageError> {
         let mut header = self.get_header(page);
         
-        if rid >= header.record_count {
+        if rid.slot_num >= header.record_count {
             return Err(PageError::InvalidRecordId);
         }
         
@@ -98,7 +98,7 @@ impl PageManager {
     pub fn update_record(&self, page: &mut Page, rid: Rid, data: &[u8]) -> Result<(), PageError> {
         let header = self.get_header(page);
         
-        if rid >= header.record_count {
+        if rid.slot_num >= header.record_count {
             return Err(PageError::InvalidRecordId);
         }
         
@@ -170,7 +170,7 @@ impl PageManager {
     pub fn get_record(&self, page: &Page, rid: Rid) -> Result<Vec<u8>, PageError> {
         let header = self.get_header(page);
         
-        if rid >= header.record_count {
+        if rid.slot_num >= header.record_count {
             return Err(PageError::InvalidRecordId);
         }
         
@@ -210,8 +210,9 @@ impl PageManager {
         let mut new_record_count = 0;
         
         // Copy non-deleted records to the new page
-        for rid in 0..header.record_count {
-            let slot_pos = self.get_slot_position(rid, header.record_count);
+        for rid_val in 0..header.record_count {
+            let current_rid = Rid::new(page.page_id, rid_val);
+            let slot_pos = self.get_slot_position(current_rid, header.record_count);
             let record_loc = self.get_record_location(page, slot_pos);
             
             // Skip deleted records
@@ -267,7 +268,7 @@ impl PageManager {
     
     // Calculate slot position based on RID
     fn get_slot_position(&self, rid: Rid, _record_count: u32) -> usize {
-        PAGE_CONSTANTS.page_size - RECORD_OFFSET_SIZE * (rid as usize + 1)
+        PAGE_CONSTANTS.page_size - RECORD_OFFSET_SIZE * (rid.slot_num as usize + 1)
     }
     
     // Get record location from slot
@@ -290,7 +291,7 @@ impl PageManager {
         let mut header = self.get_header(page);
         
         // Check if the RID is valid
-        if rid >= header.record_count {
+        if rid.slot_num >= header.record_count {
             return Err(PageError::InvalidRecordId);
         }
         

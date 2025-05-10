@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::storage::page::PageManager;
+use bayundb::common::types::Rid;
 
 // Create temporary database environment
 fn setup_test_environment(buffer_pool_size: usize) -> Arc<BufferPoolManager> {
@@ -112,7 +113,7 @@ fn table_operations_benchmark(c: &mut Criterion) {
                     
                     // Scan all records
                     for rid in 0..header.record_count {
-                        match page_manager.get_record(&page_guard, rid) {
+                        match page_manager.get_record(&page_guard, Rid::new(page_id, rid)) {
                             Ok(_) => {
                                 // Simply read the record, don't do anything with it
                             },
@@ -167,7 +168,7 @@ fn table_operations_benchmark(c: &mut Criterion) {
                 
                 {
                     let page_guard = page.read();
-                    match page_manager.get_record(&page_guard, rid) {
+                    match page_manager.get_record(&page_guard, Rid::new(page_id, rid)) {
                         Ok(_) => {
                             // Simply read the record
                         },

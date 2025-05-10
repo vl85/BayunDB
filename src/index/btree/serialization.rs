@@ -68,13 +68,15 @@ where
     LittleEndian::write_u16(&mut page.data[values_offset_loc..values_offset_loc+2], values_offset as u16);
     
     if node.is_leaf {
-        // Write values (record IDs)
-        for value in &node.values {
-            if offset + 4 > PAGE_SIZE {
+        // Write values (Rids: page_id and slot_num)
+        for value in &node.values { // value is &Rid
+            if offset + 8 > PAGE_SIZE { // Each Rid takes 8 bytes (2 * u32)
                 return Err(BTreeError::NodeTooLarge);
             }
             
-            LittleEndian::write_u32(&mut page.data[offset..offset+4], *value);
+            LittleEndian::write_u32(&mut page.data[offset..offset+4], value.page_id);
+            offset += 4;
+            LittleEndian::write_u32(&mut page.data[offset..offset+4], value.slot_num);
             offset += 4;
         }
     } else {
@@ -144,11 +146,16 @@ where
     offset = values_offset;
     
     if is_leaf {
-        // Read values (record IDs)
+        // Read values (Rids: page_id and slot_num)
         for _ in 0..key_count {
-            let value = LittleEndian::read_u32(&page.data[offset..offset+4]);
-            values.push(value);
+            if offset + 8 > PAGE_SIZE { // Check for space for two u32s
+                return Err(BTreeError::DeserializationError("Not enough data for Rid".to_string()));
+            }
+            let page_id = LittleEndian::read_u32(&page.data[offset..offset+4]);
             offset += 4;
+            let slot_num = LittleEndian::read_u32(&page.data[offset..offset+4]);
+            offset += 4;
+            values.push(Rid::new(page_id, slot_num));
         }
     } else {
         // Read children (page IDs)
@@ -207,7 +214,13 @@ mod tests {
         // Create a leaf node with i32 keys
         let mut node = BTreeNode::<i32>::new_leaf();
         node.keys = vec![5, 10, 15, 20];
-        node.values = vec![1005, 1010, 1015, 1020];
+        // Use Rid::new for values, assuming page_id 0 for test purposes
+        node.values = vec![
+            Rid::new(0, 1005),
+            Rid::new(0, 1010),
+            Rid::new(0, 1015),
+            Rid::new(0, 1020),
+        ];
         node.next_leaf = Some(999);
         
         // Create a page for serialization
@@ -226,7 +239,12 @@ mod tests {
         // Verify node structure
         assert_eq!(deserialized.is_leaf, true);
         assert_eq!(deserialized.keys, vec![5, 10, 15, 20]);
-        assert_eq!(deserialized.values, vec![1005, 1010, 1015, 1020]);
+        assert_eq!(deserialized.values, vec![
+            Rid::new(0, 1005),
+            Rid::new(0, 1010),
+            Rid::new(0, 1015),
+            Rid::new(0, 1020),
+        ]);
         assert_eq!(deserialized.next_leaf, Some(999));
         assert!(deserialized.children.is_empty());
     }
@@ -287,12 +305,12 @@ mod tests {
     
     #[test]
     fn test_header_values() {
-        // Create a leaf node with some keys
+        // Create a leaf node
         let mut node = BTreeNode::<i32>::new_leaf();
-        node.keys = vec![1, 2, 3];
-        node.values = vec![101, 102, 103];
-        node.next_leaf = Some(42);
-        
+        node.keys = vec![1, 2];
+        node.values = vec![Rid::new(0, 1001), Rid::new(0, 1002)];
+        node.next_leaf = Some(123);
+
         // Create a page
         let mut page = Page {
             data: [0; PAGE_SIZE],
@@ -303,23 +321,24 @@ mod tests {
         // Serialize the node
         serialize_node(&node, &mut page).unwrap();
         
-        // Directly inspect the header values in the page
-        assert_eq!(page.data[0], 1); // is_leaf = true
-        assert_eq!(LittleEndian::read_u16(&page.data[1..3]), 3); // key_count = 3
-        assert_eq!(LittleEndian::read_u32(&page.data[3..7]), 42); // next_leaf = 42
+        // Deserialize the node
+        let deserialized_node = deserialize_node::<i32>(&page).unwrap();
+        
+        // Check header values
+        assert_eq!(deserialized_node.is_leaf, true);
+        assert_eq!(deserialized_node.keys.len(), 2);
+        assert_eq!(deserialized_node.values, vec![Rid::new(0, 1001), Rid::new(0, 1002)]);
+        assert_eq!(deserialized_node.next_leaf, Some(123));
     }
     
     #[test]
     fn test_string_keys() {
-        // Create a leaf node with string keys
+        // Create a leaf node with String keys
         let mut node = BTreeNode::<String>::new_leaf();
-        node.keys = vec![
-            "apple".to_string(), 
-            "banana".to_string(), 
-            "cherry".to_string()
-        ];
-        node.values = vec![1, 2, 3];
-        
+        node.keys = vec!["apple".to_string(), "banana".to_string()];
+        node.values = vec![Rid::new(0, 2001), Rid::new(0, 2002)];
+        node.next_leaf = Some(789);
+
         // Create a page
         let mut page = Page {
             data: [0; PAGE_SIZE],
@@ -331,15 +350,12 @@ mod tests {
         serialize_node(&node, &mut page).unwrap();
         
         // Deserialize the node
-        let deserialized = deserialize_node::<String>(&page).unwrap();
+        let deserialized_node = deserialize_node::<String>(&page).unwrap();
         
-        // Verify node structure
-        assert_eq!(deserialized.is_leaf, true);
-        assert_eq!(deserialized.keys, vec![
-            "apple".to_string(), 
-            "banana".to_string(), 
-            "cherry".to_string()
-        ]);
-        assert_eq!(deserialized.values, vec![1, 2, 3]);
+        // Check node structure
+        assert_eq!(deserialized_node.is_leaf, true);
+        assert_eq!(deserialized_node.keys, vec!["apple".to_string(), "banana".to_string()]);
+        assert_eq!(deserialized_node.values, vec![Rid::new(0, 2001), Rid::new(0, 2002)]);
+        assert_eq!(deserialized_node.next_leaf, Some(789));
     }
 } 

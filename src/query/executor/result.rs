@@ -9,6 +9,9 @@ use std::hash::{Hash, Hasher};
 use serde;
 use thiserror::Error;
 
+use crate::query::parser::components::ParseError;
+use crate::storage::page::PageError;
+
 /// Possible data types for values in a row
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DataValue {
@@ -86,6 +89,37 @@ impl PartialOrd for DataValue {
             
             // Different types are incomparable (except int/float)
             _ => None,
+        }
+    }
+}
+
+impl DataValue {
+    pub fn get_type(&self) -> crate::query::parser::ast::DataType {
+        match self {
+            DataValue::Null => crate::query::parser::ast::DataType::Text, // Or a special "NullType"
+            DataValue::Integer(_) => crate::query::parser::ast::DataType::Integer,
+            DataValue::Float(_) => crate::query::parser::ast::DataType::Float,
+            DataValue::Text(_) => crate::query::parser::ast::DataType::Text,
+            DataValue::Boolean(_) => crate::query::parser::ast::DataType::Boolean,
+        }
+    }
+
+    pub fn is_compatible_with(&self, target_ast_type: &crate::query::parser::ast::DataType) -> bool {
+        match self {
+            DataValue::Null => true, // Null is compatible with any nullable column
+            DataValue::Integer(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Integer | crate::query::parser::ast::DataType::Float),
+            DataValue::Float(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Float | crate::query::parser::ast::DataType::Integer),
+            DataValue::Text(s) => {
+                match target_ast_type {
+                    crate::query::parser::ast::DataType::Text => true,
+                    crate::query::parser::ast::DataType::Integer => s.parse::<i64>().is_ok(),
+                    crate::query::parser::ast::DataType::Float => s.parse::<f64>().is_ok(),
+                    crate::query::parser::ast::DataType::Boolean => s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false"),
+                    // Add other types like Date, Timestamp if they become parseable from Text
+                    _ => false,
+                }
+            },
+            DataValue::Boolean(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Boolean | crate::query::parser::ast::DataType::Text),
         }
     }
 }
@@ -196,6 +230,20 @@ pub enum QueryError {
     /// Invalid operation
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+}
+
+// Implement From<ParseError> for QueryError
+impl From<ParseError> for QueryError {
+    fn from(err: ParseError) -> Self {
+        QueryError::PlanningError(format!("Parse error: {:?}", err))
+    }
+}
+
+// Implement From<PageError> for QueryError
+impl From<PageError> for QueryError {
+    fn from(err: PageError) -> Self {
+        QueryError::StorageError(format!("Page error: {:?}", err))
+    }
 }
 
 /// Result type for query operations

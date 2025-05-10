@@ -9,6 +9,8 @@ use serde::{Serialize, Deserialize};
 /// Represents a database table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
+    /// Table ID (unique within the database)
+    id: u32,
     /// Table name
     name: String,
     /// Columns in the table
@@ -36,12 +38,23 @@ impl Table {
         }
         
         Table {
+            id: 0, // Default to 0, will be set by Catalog
             name,
             columns,
             column_map,
             primary_key_columns,
             first_page_id: None,
         }
+    }
+    
+    /// Get the table ID
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+    
+    /// Set the table ID (used by Catalog during creation)
+    pub(crate) fn set_id(&mut self, id: u32) {
+        self.id = id;
     }
     
     /// Get the table name

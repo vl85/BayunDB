@@ -4,7 +4,9 @@
 
 use std::fmt;
 
-use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, ColumnDef, AggregateFunction};
+use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, ColumnDef};
+use crate::query::parser::ast::AggregateFunction;
+use crate::catalog::{Catalog, Table as CatalogTable, Column as CatalogColumn, DataType as CatalogDataType};
 
 /// Represents a node in the logical query plan
 #[derive(Debug, Clone)]

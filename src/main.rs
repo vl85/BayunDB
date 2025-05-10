@@ -58,7 +58,7 @@ fn main() -> Result<()> {
         let mut page_guard = page.write();
         let data = b"Hello, Database!";
         if let Ok(rid) = page_manager.insert_record(&mut page_guard, data) {
-            println!("Inserted record with RID: {}", rid);
+            println!("Inserted record with RID: {:?}", rid);
             
             // Example: Insert into B+Tree
             btree_index.insert(42, rid)?;

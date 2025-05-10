@@ -88,8 +88,8 @@ pub fn create_filter(
     ))))
 }
 
-pub fn create_projection(input: Arc<Mutex<dyn Operator + Send>>, columns: Vec<String>) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
-    project::create_projection(input, columns)
+pub fn create_projection(input: Arc<Mutex<dyn Operator + Send>>, columns: Vec<String>, input_alias: String) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
+    project::create_projection(input, columns, input_alias)
 }
 
 pub fn create_nested_loop_join(

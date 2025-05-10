@@ -11,7 +11,17 @@ pub type PageId = u32;
 pub type TxnId = u32;
 
 /// Record ID type
-pub type Rid = u32;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Rid {
+    pub page_id: PageId,
+    pub slot_num: u32, // Assuming slot_num is the record identifier within a page
+}
+
+impl Rid {
+    pub fn new(page_id: PageId, slot_num: u32) -> Self {
+        Self { page_id, slot_num }
+    }
+}
 
 /// Buffer pool frame ID type
 pub type FrameId = u32;

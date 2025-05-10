@@ -127,14 +127,14 @@ fn test_recovery_with_checkpoint() -> Result<()> {
                     DataOperationContent {
                         table_id: 1,
                         page_id,
-                        record_id,
+                        record_id: record_id.slot_num,
                         before_image: None,
                         after_image: Some(value.clone()),
                     }
                 )
             )?;
             
-            println!("Inserted pre-checkpoint record: key={}, page={}, record_id={}", 
+            println!("Inserted pre-checkpoint record: key={}, page={}, record_id={:?}", 
                      key, page_id, record_id);
         }
     }
@@ -214,14 +214,14 @@ fn test_recovery_with_checkpoint() -> Result<()> {
                     DataOperationContent {
                         table_id: 1,
                         page_id,
-                        record_id,
+                        record_id: record_id.slot_num,
                         before_image: None,
                         after_image: Some(value.clone()),
                     }
                 )
             )?;
             
-            println!("Inserted post-checkpoint record: key={}, page={}, record_id={}", 
+            println!("Inserted post-checkpoint record: key={}, page={}, record_id={:?}", 
                      key, page_id, record_id);
         }
     }
@@ -292,15 +292,15 @@ fn test_recovery_with_checkpoint() -> Result<()> {
         
         // Try to read the record
         let record_data = page_manager.get_record(&page_guard, *record_id);
-        assert!(record_data.is_ok(), "Failed to get record {} from page {}: {:?}", 
+        assert!(record_data.is_ok(), "Failed to get record {:?} from page {}: {:?}", 
                 record_id, page_id, record_data.err());
         
         let actual_value = record_data.unwrap();
         assert_eq!(&actual_value, expected_value, 
-                 "Record data mismatch for key {} (page: {}, record: {})", 
+                 "Record data mismatch for key {} (page: {}, record: {:?})", 
                  key, page_id, record_id);
                  
-        println!("✓ Verified key {} (page: {}, record: {})", key, page_id, record_id);
+        println!("✓ Verified key {} (page: {}, record: {:?})", key, page_id, record_id);
         
         // Unpin the page
         buffer_pool_after_crash.unpin_page(*page_id, false)?;
@@ -318,15 +318,15 @@ fn test_recovery_with_checkpoint() -> Result<()> {
         
         // Try to read the record
         let record_data = page_manager.get_record(&page_guard, *record_id);
-        assert!(record_data.is_ok(), "Failed to get record {} from page {}: {:?}", 
+        assert!(record_data.is_ok(), "Failed to get record {:?} from page {}: {:?}", 
                 record_id, page_id, record_data.err());
         
         let actual_value = record_data.unwrap();
         assert_eq!(&actual_value, expected_value, 
-                 "Record data mismatch for key {} (page: {}, record: {})", 
+                 "Record data mismatch for key {} (page: {}, record: {:?})", 
                  key, page_id, record_id);
                  
-        println!("✓ Verified key {} (page: {}, record: {})", key, page_id, record_id);
+        println!("✓ Verified key {} (page: {}, record: {:?})", key, page_id, record_id);
         
         // Unpin the page
         buffer_pool_after_crash.unpin_page(*page_id, false)?;

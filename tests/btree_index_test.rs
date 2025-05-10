@@ -30,15 +30,15 @@ fn test_btree_insert_find() -> Result<()> {
         (7, 1005),
     ];
     
-    for &(key, rid) in &test_data {
-        btree.insert(key, rid as Rid)?;
+    for &(key, rid_val) in &test_data {
+        btree.insert(key, Rid::new(0, rid_val as u32))?;
     }
     
     // Find the values
-    for &(key, expected_rid) in &test_data {
+    for &(key, expected_rid_val) in &test_data {
         let results = btree.find(&key)?;
         assert!(!results.is_empty());
-        assert!(results.contains(&(expected_rid as Rid)));
+        assert!(results.contains(&Rid::new(0, expected_rid_val as u32)));
     }
     
     // Try to find a non-existent key
@@ -56,7 +56,7 @@ fn test_btree_range_scan() -> Result<()> {
     
     // Insert some key-value pairs in order
     for i in 1..20 {
-        btree.insert(i, (1000 + i) as Rid)?;
+        btree.insert(i, Rid::new(0, (1000 + i) as u32))?;
     }
     
     // Perform range scan
@@ -69,7 +69,7 @@ fn test_btree_range_scan() -> Result<()> {
     
     // Check if specific rids exist in results
     for i in 5..=10 {
-        assert!(results.contains(&((1000 + i) as Rid)));
+        assert!(results.contains(&Rid::new(0, (1000 + i) as u32)));
     }
     
     // Try empty range
@@ -88,7 +88,7 @@ fn test_btree_remove() -> Result<()> {
     
     // Insert some key-value pairs
     for i in 1..10 {
-        btree.insert(i, (1000 + i) as Rid)?;
+        btree.insert(i, Rid::new(0, (1000 + i) as u32))?;
     }
     
     // Find a key
@@ -108,7 +108,7 @@ fn test_btree_remove() -> Result<()> {
         if i != key {
             let results = btree.find(&i)?;
             assert!(!results.is_empty());
-            assert!(results.contains(&((1000 + i) as Rid)));
+            assert!(results.contains(&Rid::new(0, (1000 + i) as u32)));
         }
     }
     

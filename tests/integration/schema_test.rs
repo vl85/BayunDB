@@ -14,6 +14,10 @@ use bayundb::storage::page::PageManager;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 use std::sync::RwLock;
+use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
+use bayundb::transaction::wal::log_buffer::LogBufferConfig;
+use bayundb::transaction::concurrency::TransactionManager;
+use std::path::PathBuf;
 
 // Declare the common module for test utilities using a path attribute
 #[path = "../common/mod.rs"]
@@ -24,14 +28,36 @@ use common::insert_test_data;
 fn test_create_table() {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
+
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."), 
+        |p| p.to_path_buf()
+    );
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     
     // Create buffer pool manager
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, &db_path_str).unwrap());
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir.clone(),
+        log_file_base_name: log_file_base_name.clone(),
+        max_log_file_size: 10 * 1024 * 1024, // 10MB
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
     
     // Define a CREATE TABLE statement
     let sql = "CREATE TABLE employees (
@@ -85,14 +111,36 @@ fn test_create_table() {
 fn test_simple_create_table() {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
+
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."), 
+        |p| p.to_path_buf()
+    );
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     
     // Create buffer pool manager
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, &db_path_str).unwrap());
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir.clone(),
+        log_file_base_name: log_file_base_name.clone(),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
     
     // Define a simpler CREATE TABLE statement
     let sql = "CREATE TABLE users (id INTEGER, name TEXT)";
@@ -118,14 +166,36 @@ fn test_simple_create_table() {
 fn test_create_table_with_execute_query() {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
+
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."), 
+        |p| p.to_path_buf()
+    );
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     
     // Create buffer pool manager
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, &db_path_str).unwrap());
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir.clone(),
+        log_file_base_name: log_file_base_name.clone(),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
     
     // Use execute_query directly with SQL (this would have hung before our fix)
     let sql = "CREATE TABLE products (
@@ -168,14 +238,36 @@ fn test_create_table_with_execute_query() {
 fn test_scan_operator_uses_catalog() {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
-    
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
+
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."), 
+        |p| p.to_path_buf()
+    );
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+
     // Create buffer pool manager
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, &db_path_str).unwrap());
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir.clone(),
+        log_file_base_name: log_file_base_name.clone(),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
     
     // Define a CREATE TABLE statement
     let sql = "CREATE TABLE dynamic_table (
@@ -233,11 +325,33 @@ fn test_scan_operator_uses_catalog() {
 fn test_scan_operator_with_different_column_types() -> Result<()> {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
+
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."), 
+        |p| p.to_path_buf()
+    );
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, &path)?);
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, &db_path_str)?);
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
+
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir.clone(),
+        log_file_base_name: log_file_base_name.clone(),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
     
     let sql = "CREATE TABLE all_types_table (
         id INTEGER PRIMARY KEY,
@@ -356,15 +470,37 @@ fn test_scan_operator_with_different_column_types() -> Result<()> {
 fn test_scan_operator_returns_empty_result_for_empty_table() {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
-    
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
+
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."), 
+        |p| p.to_path_buf()
+    );
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+
     // Create buffer pool manager
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, &db_path_str).unwrap());
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir.clone(),
+        log_file_base_name: log_file_base_name.clone(),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
-    
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
+
     // Create a simple table
     let sql = "CREATE TABLE empty_table (id INTEGER PRIMARY KEY, name TEXT)";
     let result = engine.execute_query(sql).unwrap();
@@ -408,16 +544,38 @@ fn test_scan_operator_returns_empty_result_for_empty_table() {
 fn test_catalog_empty_table_direct_check() {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
     
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."),
+        |p| p.to_path_buf()
+    );
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+
     // Create buffer pool manager
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, &db_path_str).unwrap());
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
     
+    // Create LogManagerConfig
+     let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir.clone(),
+        log_file_base_name: log_file_base_name.clone(),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
-    
-    // Create a simple empty table
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
+
+    // Define a CREATE TABLE statement
     let sql = "CREATE TABLE empty_catalog_table (id INTEGER PRIMARY KEY, value TEXT)";
     let result = engine.execute_query(sql).unwrap();
     assert_eq!(result.row_count(), 1, "Table creation should succeed");

@@ -5,41 +5,59 @@
 use std::sync::{Arc, Mutex};
 
 use crate::query::executor::operators::Operator;
-use crate::query::executor::result::{Row, QueryResult, QueryError};
+use crate::query::executor::result::{Row, QueryResult, QueryError, DataValue};
 
 /// Projection operator that selects specific columns from input rows
 pub struct ProjectionOperator {
     /// The input operator
     input: Arc<Mutex<dyn Operator + Send>>,
-    /// The columns to project
+    /// The columns to project (output names)
     columns: Vec<String>,
+    /// Alias of the input operator, used to find columns in the input row
+    input_alias: String,
     /// Whether the operator is initialized
     initialized: bool,
 }
 
 impl ProjectionOperator {
     /// Create a new projection operator
-    pub fn new(input: Arc<Mutex<dyn Operator + Send>>, columns: Vec<String>) -> Self {
+    pub fn new(input: Arc<Mutex<dyn Operator + Send>>, columns: Vec<String>, input_alias: String) -> Self {
         ProjectionOperator {
             input,
             columns,
+            input_alias,
             initialized: false,
         }
     }
     
     /// Project a row to only include the specified columns
-    fn project_row(&self, row: Row) -> Row {
+    fn project_row(&self, input_row: Row) -> Row {
         let mut projected_row = Row::new();
         
-        // If columns is empty or contains a wildcard, return the original row
         if self.columns.is_empty() || self.columns.contains(&"*".to_string()) {
-            return row;
+            // For SELECT *, if input_alias is present, we might want to strip it from keys.
+            // However, SELECT * usually implies taking columns as they are from the direct source.
+            // The current ExecutionEngine logic for SeqScan handles this by providing unqualified names.
+            // If self.columns is genuinely from a SELECT *, this path is okay.
+            return input_row;
         }
         
-        // Otherwise, only include the specified columns
-        for column in &self.columns {
-            if let Some(value) = row.get(column) {
-                projected_row.set(column.clone(), value.clone());
+        for output_col_name in &self.columns {
+            // Try to find the column in the input_row using the input_alias
+            let qualified_input_col_name = format!("{}.{}", self.input_alias, output_col_name);
+            
+            if !self.input_alias.is_empty() && input_row.get(&qualified_input_col_name).is_some() {
+                if let Some(value) = input_row.get(&qualified_input_col_name) {
+                    projected_row.set(output_col_name.clone(), value.clone());
+                }
+            } else if input_row.get(output_col_name).is_some() {
+                // Fallback: try direct name (if input_alias was empty, or input row uses direct names)
+                if let Some(value) = input_row.get(output_col_name) {
+                    projected_row.set(output_col_name.clone(), value.clone());
+                }
+            } else {
+                // Column not found, set to Null. Or consider an error.
+                projected_row.set(output_col_name.clone(), DataValue::Null);
             }
         }
         
@@ -101,9 +119,10 @@ impl Operator for ProjectionOperator {
 /// Create a projection operator
 pub fn create_projection(
     input: Arc<Mutex<dyn Operator + Send>>,
-    columns: Vec<String>
+    columns: Vec<String>,
+    input_alias: String,
 ) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
-    let projection = ProjectionOperator::new(input, columns);
+    let projection = ProjectionOperator::new(input, columns, input_alias);
     Ok(Arc::new(Mutex::new(projection)))
 }
 
@@ -180,7 +199,7 @@ mod tests {
         
         // Create a projection operator with selected columns
         let columns = vec!["id".to_string(), "name".to_string()];
-        let mut projection_op = ProjectionOperator::new(mock_op_arc, columns);
+        let mut projection_op = ProjectionOperator::new(mock_op_arc, columns, "mock_input".to_string());
         
         // Initialize and test
         projection_op.init().unwrap();

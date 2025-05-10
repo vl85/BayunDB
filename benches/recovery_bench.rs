@@ -94,7 +94,7 @@ fn generate_workload(
             let rid = page_manager.insert_record(&mut page_guard, &record_data).unwrap();
             
             // Log the insert
-            txn.log_insert(0, page_id, rid, &record_data).unwrap();
+            txn.log_insert(0, page_id, rid.slot_num, &record_data).unwrap();
         }
         
         // Unpin page
@@ -163,7 +163,7 @@ fn bench_recovery_time(c: &mut Criterion) {
                     page_manager.init_page(&mut page_guard);
                     
                     let rid = page_manager.insert_record(&mut page_guard, &record_data).unwrap();
-                    txn.log_insert(0, page_id, rid, &record_data).unwrap();
+                    txn.log_insert(0, page_id, rid.slot_num, &record_data).unwrap();
                 }
                 
                 buffer_pool.unpin_page_with_txn(page_id, true, Some(&txn), None).unwrap();
@@ -257,7 +257,7 @@ fn bench_recovery_with_checkpoints(c: &mut Criterion) {
                     page_manager.init_page(&mut page_guard);
                     
                     let rid = page_manager.insert_record(&mut page_guard, &record_data).unwrap();
-                    txn.log_insert(0, page_id, rid, &record_data).unwrap();
+                    txn.log_insert(0, page_id, rid.slot_num, &record_data).unwrap();
                 }
                 
                 buffer_pool.unpin_page_with_txn(page_id, true, Some(&txn), None).unwrap();

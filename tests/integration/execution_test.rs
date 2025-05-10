@@ -10,6 +10,10 @@ use bayundb::storage::page::PageManager;
 use bayundb::query::parser::ast::{Expression, ColumnReference, Operator, Value};
 use std::sync::RwLock;
 use rand;
+use bayundb::transaction::concurrency::transaction_manager::TransactionManager;
+use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
+use bayundb::transaction::wal::log_buffer::LogBufferConfig;
+use std::path::PathBuf;
 
 // Declare the common module for test utilities using a path attribute
 #[path = "../common/mod.rs"]
@@ -105,16 +109,31 @@ fn test_result_rows() -> Result<()> {
 fn test_create_table_execution() -> Result<()> {
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test_create_db.db");
-    let log_dir = temp_dir.path().join("logs");
-    std::fs::create_dir_all(&log_dir)?;
     
+    // Create a separate directory for WAL files if it doesn't exist
+    let wal_artifacts_dir = temp_dir.path().join("test_create_db_wal_artifacts");
+    std::fs::create_dir_all(&wal_artifacts_dir)?;
+    let log_file_base_name = "test_create_table_wal".to_string();
+
     let buffer_pool = Arc::new(BufferPoolManager::new(
         100,
         db_path.to_str().unwrap()
     )?);
     
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-    let _engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc);
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_artifacts_dir, // Use the dedicated WAL directory
+        log_file_base_name,
+        max_log_file_size: 10 * 1024 * 1024, // 10MB
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
+    let _engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc, transaction_manager);
     
     Ok(())
 }
@@ -171,54 +190,282 @@ fn test_different_filter_condition() -> Result<()> {
     Ok(())
 }
 
-/// Test to verify scanning all rows
+/// Test to verify scanning all rows using ExecutionEngine for INSERT and SELECT
 #[test]
-fn test_scan_all_rows() -> Result<()> {
-    let temp_dir = tempdir()?;
-    let db_path = temp_dir.path().join("test_db_scan_all.db");
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, db_path.to_str().unwrap())?);
-    let page_manager = PageManager::new();
+fn test_scan_all_rows_with_engine() -> Result<()> {
+    let temp_dir_main = tempdir()?; 
+    let db_path = temp_dir_main.path().join("test_scan_engine.db");
+
+    let temp_dir_log = tempdir()?; 
+    let log_path = temp_dir_log.path();
+    let log_manager_config = LogManagerConfig {
+        log_dir: PathBuf::from(log_path),
+        log_file_base_name: "test_wal_scan".to_string(),
+        max_log_file_size: 1024 * 1024, 
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false, 
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config)?);
+    
+    let buffer_pool = Arc::new(BufferPoolManager::new_with_wal(
+        100, 
+        db_path.to_str().unwrap(), 
+        log_manager.clone()
+    )?);
+    
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-
-    let table_name = format!("test_table_scan_all_{}", rand::random::<u32>());
-
-    create_test_table_schema(&catalog_arc, &table_name)?;
-    let test_data = generate_data_for_generic_table(19);
-    insert_test_data(&table_name, test_data, &buffer_pool, &page_manager, &catalog_arc)?;
-
-    let scan_op = create_table_scan(&table_name, &table_name, buffer_pool.clone(), catalog_arc.clone())
-        .map_err(|e| anyhow!(format!("Failed to create scan operator for table {}: {:?}", table_name, e)))?;
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
-    let mut op = scan_op.lock().map_err(|e| anyhow!("Failed to lock operator: {}", e))?;
-    op.init().map_err(|e| anyhow!("Failed to initialize operator: {:?}", e))?;
-    
-    let mut found_ids = Vec::new();
-    let expected_column_name = format!("{}.id", table_name); // Expect aliased name
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
 
-    while let Some(row) = op.next()? {
-        // println!("[TEST_SCAN_ALL] Row: {:?}", row.columns()); // Debug: print column names in row
-        if let Some(data_value) = row.get(&expected_column_name) { // Use aliased name
-            if let DataValue::Integer(id_val_ref) = data_value {
-                found_ids.push(*id_val_ref);
-            } else {
-                panic!("Expected INTEGER for column '{}', got {:?}", expected_column_name, data_value);
+    let table_name = format!("test_scan_engine_{}", rand::random::<u32>());
+
+    let create_query = format!(
+        "CREATE TABLE {} (id INT PRIMARY KEY, name TEXT, age INT, active BOOLEAN);",
+        table_name
+    );
+    let create_result = engine.execute_query(&create_query)?;
+    assert!(create_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("created successfully"));
+
+    let num_rows_to_insert = 5;
+    for i in 0..num_rows_to_insert {
+        let name_val = format!("User {}", i);
+        let age_val = 20 + i;
+        let active_val = if i % 2 == 0 { "true" } else { "false" };
+        let insert_query = format!(
+            "INSERT INTO {} (id, name, age, active) VALUES ({}, '{}', {}, {});",
+            table_name, i, name_val, age_val, active_val
+        );
+        let insert_result = engine.execute_query(&insert_query)?;
+        assert!(insert_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("INSERT into"));
+        assert!(insert_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("successful"));
+    }
+
+    let select_query_unordered = format!("SELECT id, name, age, active FROM {};", table_name);
+    let result_set = engine.execute_query(&select_query_unordered)?;
+    let mut found_rows: Vec<Row> = result_set.rows().iter().cloned().collect();
+    
+    found_rows.sort_by(|a, b| {
+        let id_a = match a.get("id") { Some(DataValue::Integer(val)) => *val, _ => panic!("Row missing 'id' or not an integer: {:?}", a) };
+        let id_b = match b.get("id") { Some(DataValue::Integer(val)) => *val, _ => panic!("Row missing 'id' or not an integer: {:?}", b) };
+        id_a.cmp(&id_b)
+    });
+
+    assert_eq!(found_rows.len(), num_rows_to_insert as usize, "Expected {} rows from SELECT", num_rows_to_insert);
+
+    for i in 0..num_rows_to_insert {
+        let row = &found_rows[i as usize];
+        match row.get("id") { Some(DataValue::Integer(id_val)) => assert_eq!(*id_val, i as i64, "ID mismatch for row {}", i), _ => panic!("Missing or incorrect type for 'id' in row {}: {:?}", i, row) };
+        let expected_name = format!("User {}", i);
+        match row.get("name") { Some(DataValue::Text(name_val)) => assert_eq!(name_val, &expected_name, "Name mismatch for row {}", i), _ => panic!("Missing or incorrect type for 'name' in row {}: {:?}", i, row) };
+        let expected_age = 20 + i;
+        match row.get("age") { Some(DataValue::Integer(age_val)) => assert_eq!(*age_val, expected_age as i64, "Age mismatch for row {}", i), _ => panic!("Missing or incorrect type for 'age' in row {}: {:?}", i, row) };
+        let expected_active = i % 2 == 0;
+        match row.get("active") { Some(DataValue::Boolean(active_val)) => assert_eq!(*active_val, expected_active, "Active mismatch for row {}", i), _ => panic!("Missing or incorrect type for 'active' in row {}: {:?}", i, row) };
+    }
+    
+    Ok(())
+}
+
+/// Test to verify basic UPDATE statement execution
+#[test]
+fn test_update_rows_with_engine() -> Result<()> {
+    let temp_dir_main = tempdir()?;
+    let db_path = temp_dir_main.path().join("test_update_engine.db");
+
+    let temp_dir_log = tempdir()?;
+    let log_path = temp_dir_log.path();
+    let log_manager_config = LogManagerConfig {
+        log_dir: PathBuf::from(log_path),
+        log_file_base_name: "test_wal_update".to_string(),
+        max_log_file_size: 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config)?);
+
+    let buffer_pool = Arc::new(BufferPoolManager::new_with_wal(
+        100,
+        db_path.to_str().unwrap(),
+        log_manager.clone(),
+    )?);
+
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
+
+    let table_name = format!("test_update_table_{}", rand::random::<u32>());
+
+    let create_query = format!(
+        "CREATE TABLE {} (id INT PRIMARY KEY, name TEXT, age INT, city TEXT);",
+        table_name
+    );
+    engine.execute_query(&create_query)?;
+
+    // Insert initial data
+    let initial_data = vec![
+        (1, "Alice", 30, "New York"),
+        (2, "Bob", 24, "London"),
+        (3, "Charlie", 35, "Paris"),
+        (4, "David", 28, "New York"),
+    ];
+
+    for (id, name, age, city) in initial_data {
+        let insert_query = format!(
+            "INSERT INTO {} (id, name, age, city) VALUES ({}, '{}', {}, '{}');",
+            table_name, id, name, age, city
+        );
+        engine.execute_query(&insert_query)?;
+    }
+
+    // Update rows where city is "New York"
+    let update_query = format!(
+        "UPDATE {} SET age = age + 1, city = 'Brooklyn' WHERE city = 'New York';",
+        table_name
+    );
+    let update_result = engine.execute_query(&update_query)?;
+    // Assuming the engine returns a status message for UPDATE, like "UPDATE X rows affected"
+    // For now, let's just check it doesn't error, specific row count can be asserted later if available
+    assert!(update_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("UPDATE"));
+    // TODO: Assert number of rows affected if the engine provides this info.
+
+    // Verify the updated data
+    let select_query = format!("SELECT id, name, age, city FROM {};", table_name);
+    let result_set = engine.execute_query(&select_query)?;
+    let mut updated_rows: Vec<Row> = result_set.rows().iter().cloned().collect();
+    updated_rows.sort_by_key(|row| match row.get("id") { Some(DataValue::Integer(val)) => *val, _ => 0 });
+
+    assert_eq!(updated_rows.len(), 4, "Should still have 4 rows after update");
+
+    // Expected data after update
+    // Alice (id 1): age 30 -> 31, city New York -> Brooklyn
+    // Bob (id 2): age 24, city London (unchanged)
+    // Charlie (id 3): age 35, city Paris (unchanged)
+    // David (id 4): age 28 -> 29, city New York -> Brooklyn
+
+    for row in updated_rows {
+        let id = match row.get("id") { Some(DataValue::Integer(val)) => *val, _ => panic!("Missing id") };
+        let name = match row.get("name") { Some(DataValue::Text(val)) => val.clone(), _ => panic!("Missing name") };
+        let age = match row.get("age") { Some(DataValue::Integer(val)) => *val, _ => panic!("Missing age") };
+        let city = match row.get("city") { Some(DataValue::Text(val)) => val.clone(), _ => panic!("Missing city") };
+
+        match id {
+            1 => {
+                assert_eq!(name, "Alice");
+                assert_eq!(age, 31, "Alice's age should be updated");
+                assert_eq!(city, "Brooklyn", "Alice's city should be updated");
             }
-        } else {
-            // If the primary key column is not found with the aliased name, something is wrong
-            // Print all available columns for debugging
-            let available_columns: Vec<&String> = row.columns().iter().collect();
-            panic!(
-                "Column '{}' not found in row. Available columns: {:?}. Table name: {}, Alias used: {}", 
-                expected_column_name, 
-                available_columns,
-                table_name, // original table name used for alias
-                table_name  // alias itself
-            );
+            2 => {
+                assert_eq!(name, "Bob");
+                assert_eq!(age, 24, "Bob's age should be unchanged");
+                assert_eq!(city, "London", "Bob's city should be unchanged");
+            }
+            3 => {
+                assert_eq!(name, "Charlie");
+                assert_eq!(age, 35, "Charlie's age should be unchanged");
+                assert_eq!(city, "Paris", "Charlie's city should be unchanged");
+            }
+            4 => {
+                assert_eq!(name, "David");
+                assert_eq!(age, 29, "David's age should be updated");
+                assert_eq!(city, "Brooklyn", "David's city should be updated");
+            }
+            _ => panic!("Unexpected id: {}", id),
         }
     }
-    op.close()?;
+    Ok(())
+}
 
-    let expected_ids: Vec<i64> = (0..19).collect();
-    assert_eq!(found_ids, expected_ids, "Expected IDs 0-18 from scan_all_rows");
+/// Test to verify basic DELETE statement execution
+#[test]
+fn test_delete_rows_with_engine() -> Result<()> {
+    let temp_dir_main = tempdir()?;
+    let db_path = temp_dir_main.path().join("test_delete_engine.db");
+
+    let temp_dir_log = tempdir()?;
+    let log_path = temp_dir_log.path();
+    let log_manager_config = LogManagerConfig {
+        log_dir: PathBuf::from(log_path),
+        log_file_base_name: "test_wal_delete".to_string(),
+        max_log_file_size: 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config)?);
+
+    let buffer_pool = Arc::new(BufferPoolManager::new_with_wal(
+        100,
+        db_path.to_str().unwrap(),
+        log_manager.clone(),
+    )?);
+
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
+
+    let table_name = format!("test_delete_table_{}", rand::random::<u32>());
+
+    let create_query = format!(
+        "CREATE TABLE {} (id INT PRIMARY KEY, name TEXT, category TEXT);",
+        table_name
+    );
+    engine.execute_query(&create_query)?;
+
+    // Insert initial data
+    let initial_data = vec![
+        (1, "Apple", "Fruit"),
+        (2, "Banana", "Fruit"),
+        (3, "Carrot", "Vegetable"),
+        (4, "Broccoli", "Vegetable"),
+        (5, "Orange", "Fruit"),
+    ];
+
+    for (id, name, category) in initial_data {
+        let insert_query = format!(
+            "INSERT INTO {} (id, name, category) VALUES ({}, '{}', '{}');",
+            table_name, id, name, category
+        );
+        engine.execute_query(&insert_query)?;
+    }
+
+    // Delete rows where category is "Vegetable"
+    let delete_query = format!(
+        "DELETE FROM {} WHERE category = 'Vegetable';",
+        table_name
+    );
+    let delete_result = engine.execute_query(&delete_query)?;
+    assert!(delete_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("DELETE"));
+    // TODO: Assert number of rows affected if the engine provides this info.
+
+    // Verify the remaining data
+    let select_query = format!("SELECT id, name, category FROM {};", table_name);
+    let result_set = engine.execute_query(&select_query)?;
+    let mut remaining_rows: Vec<Row> = result_set.rows().iter().cloned().collect();
+    remaining_rows.sort_by_key(|row| match row.get("id") { Some(DataValue::Integer(val)) => *val, _ => 0 });
+
+    assert_eq!(remaining_rows.len(), 3, "Should have 3 rows after deleting Vegetables");
+
+    let expected_ids_after_delete = vec![1, 2, 5];
+    let actual_ids: Vec<i64> = remaining_rows.iter().map(|row| 
+        match row.get("id") { Some(DataValue::Integer(val)) => *val, _ => panic!("Missing id") }
+    ).collect();
+    assert_eq!(actual_ids, expected_ids_after_delete, "IDs of remaining rows mismatch");
+
+    for row in remaining_rows {
+        let category = match row.get("category") { Some(DataValue::Text(val)) => val.clone(), _ => panic!("Missing category") };
+        assert_eq!(category, "Fruit", "Only Fruits should remain");
+    }
+
+    // Test deleting all remaining rows
+    let delete_all_query = format!("DELETE FROM {};", table_name);
+    let delete_all_result = engine.execute_query(&delete_all_query)?;
+    assert!(delete_all_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("DELETE"));
+
+    let select_after_delete_all_query = format!("SELECT id FROM {};", table_name);
+    let result_set_after_delete_all = engine.execute_query(&select_after_delete_all_query)?;
+    assert_eq!(result_set_after_delete_all.rows().len(), 0, "Table should be empty after deleting all rows");
+
     Ok(())
 } 

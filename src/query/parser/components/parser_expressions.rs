@@ -50,9 +50,18 @@ fn parse_prefix_expression(parser: &mut Parser) -> ParseResult<Expression> {
                     parser.next_token();
                     Ok(Expression::Literal(Value::String(val)))
                 },
-                TokenType::IDENTIFIER(_) => {
-                    // Parse column reference
-                    parse_column_reference(parser)
+                TokenType::IDENTIFIER(val) => {
+                    // Check for boolean literals first
+                    if val.eq_ignore_ascii_case("true") {
+                        parser.next_token();
+                        Ok(Expression::Literal(Value::Boolean(true)))
+                    } else if val.eq_ignore_ascii_case("false") {
+                        parser.next_token();
+                        Ok(Expression::Literal(Value::Boolean(false)))
+                    } else {
+                        // If not a boolean, then it's a column reference or other identifier
+                        parse_column_reference(parser)
+                    }
                 },
                 TokenType::COUNT | TokenType::SUM | TokenType::AVG | 
                 TokenType::MIN | TokenType::MAX => {

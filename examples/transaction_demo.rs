@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Inserting record...");
     let record_data = b"Transaction Demo Record 1";
     let rid = insert_record(page1.clone(), &txn1, page_id1, &buffer_pool, record_data)?;
-    println!("Inserted record with RID: {}", rid);
+    println!("Inserted record with RID: {:?}", rid);
     
     // Unpin the page
     buffer_pool.unpin_page(page_id1, true)?;
@@ -73,13 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Inserting record in transaction 2...");
     let record_data2 = b"Transaction Demo Record 2";
     let rid2 = insert_record(page2.clone(), &txn2, page_id2, &buffer_pool, record_data2)?;
-    println!("Inserted record with RID: {}", rid2);
+    println!("Inserted record with RID: {:?}", rid2);
     
     // Update record in transaction 1
     println!("\nUpdating record in transaction 1...");
     let updated_data = b"Updated Transaction Record 1";
     update_record(page1.clone(), &txn1, page_id1, rid, &buffer_pool, record_data, updated_data)?;
-    println!("Updated record with RID: {}", rid);
+    println!("Updated record with RID: {:?}", rid);
     
     // Commit transaction 1
     println!("\nCommitting transaction 1...");
@@ -118,7 +118,7 @@ fn insert_record(
     let rid = page_manager.insert_record(&mut page_guard, data)?;
     
     // Log the insert operation
-    let lsn = txn.log_insert(0, page_id, rid, data)?;
+    let lsn = txn.log_insert(0, page_id, rid.slot_num, data)?;
     
     // Update the page LSN
     page_guard.lsn = lsn;
@@ -144,7 +144,7 @@ fn update_record(
     page_manager.update_record(&mut page_guard, rid, new_data)?;
     
     // Log the update operation
-    let lsn = txn.log_update(0, page_id, rid, old_data, new_data)?;
+    let lsn = txn.log_update(0, page_id, rid.slot_num, old_data, new_data)?;
     
     // Update the page LSN
     page_guard.lsn = lsn;

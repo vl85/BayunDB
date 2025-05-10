@@ -162,20 +162,19 @@ impl TableScanOperator {
             println!("[SCAN GET_NEXT_RECORD] Page ID: {}, Record count on page: {}", current_page_id_val, record_count_on_page);
 
             if self.current_slot_num < record_count_on_page as usize {
-                let rid: Rid = self.current_slot_num.try_into().map_err(|e|
-                    QueryError::ExecutionError(format!("Failed to convert slot_num {} to Rid: {}", self.current_slot_num, e))
-                )?;
+                // Construct Rid from current_page_id_val and self.current_slot_num
+                let rid = Rid::new(current_page_id_val, self.current_slot_num as u32);
                 
                 match self.page_manager.get_record(&*page_guard, rid) {
                     Ok(record_bytes) => {
                         self.current_slot_num += 1;
                         drop(page_guard); // Release read lock before deserialization and unpin
-                        println!("[SCAN GET_NEXT_RECORD] Found record at page {}, rid {}. New slot_num: {}", current_page_id_val, rid, self.current_slot_num);
+                        println!("[SCAN GET_NEXT_RECORD] Found record at page {}, rid {:?}. New slot_num: {}", current_page_id_val, rid, self.current_slot_num);
 
                         let data_values: Vec<DataValue> = match bincode::deserialize(&record_bytes) {
                             Ok(values) => values,
                             Err(e) => {
-                                println!("[SCAN GET_NEXT_RECORD] Deserialize error for page {}, rid {}: {}", current_page_id_val, rid, e);
+                                println!("[SCAN GET_NEXT_RECORD] Deserialize error for page {}, rid {:?}: {}", current_page_id_val, rid, e);
                                 let _ = self.buffer_pool.unpin_page(current_page_id_val, false);
                                 return Err(QueryError::ExecutionError(format!(
                                     "Deserialize error for table '{}', page {}, slot {}: {}", self.table_name, current_page_id_val, self.current_slot_num -1, e)));
@@ -190,7 +189,7 @@ impl TableScanOperator {
 
                             if data_values.len() != column_names.len() {
                                 println!(
-                                    "[SCAN GET_NEXT_RECORD] Schema mismatch page {}, rid {}. Expected {} cols, got {}. Cols: {:?}", 
+                                    "[SCAN GET_NEXT_RECORD] Schema mismatch page {}, rid {:?}. Expected {} cols, got {}. Cols: {:?}", 
                                     current_page_id_val, rid, column_names.len(), data_values.len(), column_names
                                 );
                                 let _ = self.buffer_pool.unpin_page(current_page_id_val, false);
@@ -212,11 +211,10 @@ impl TableScanOperator {
                         }
                     }
                     Err(PageError::RecordNotFound) => { 
-                        println!("[SCAN GET_NEXT_RECORD] RecordNotFound at page {}, slot {} (rid {}). record_count_on_page: {}", current_page_id_val, self.current_slot_num, rid, record_count_on_page);
-                        drop(page_guard);
-                        let _ = self.buffer_pool.unpin_page(current_page_id_val, false);
-                        self.done = true; 
-                        return Err(QueryError::ExecutionError(format!("RecordNotFound at page {}, slot {} despite record_count check.", current_page_id_val, self.current_slot_num)));
+                        println!("[SCAN GET_NEXT_RECORD] RecordNotFound at page {}, slot {} (rid {:?}). record_count_on_page: {}", current_page_id_val, self.current_slot_num, rid, record_count_on_page);
+                        // Instead of error, skip this slot and continue
+                        self.current_slot_num += 1;
+                        continue;
                     }
                     Err(e) => { 
                         println!("[SCAN GET_NEXT_RECORD] Error getting record bytes from page {}, slot {}: {}", current_page_id_val, self.current_slot_num, e);

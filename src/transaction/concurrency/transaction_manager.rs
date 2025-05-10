@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use crate::common::types::TxnId;
 use crate::transaction::{Transaction, IsolationLevel, TransactionError};
 use crate::transaction::wal::log_manager::LogManager;
-use crate::transaction::TransactionState;
 
 /// Transaction manager - responsible for creating and tracking transactions
 pub struct TransactionManager {

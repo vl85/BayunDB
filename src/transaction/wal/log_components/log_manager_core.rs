@@ -91,15 +91,23 @@ impl LogManager {
         std::fs::create_dir_all(&config.log_dir)?;
         
         // Initialize the file manager
-        let (file_manager, current_lsn) = LogFileManager::new(&config)?;
+        let (file_manager, current_lsn_from_fm) = LogFileManager::new(&config)?;
         
+        // Adjust current_lsn: if it's 0 (new log), start LSNs from 1.
+        // Otherwise, current_lsn_from_fm is already (max_recovered_lsn + 1).
+        let initial_atomic_lsn = if current_lsn_from_fm == 0 {
+            1
+        } else {
+            current_lsn_from_fm
+        };
+
         // Create the log buffer
         let log_buffer = LogBuffer::new(config.buffer_config.clone());
         
         Ok(Self {
             config,
             file_manager,
-            current_lsn: AtomicU64::new(current_lsn),
+            current_lsn: AtomicU64::new(initial_atomic_lsn),
             log_buffer,
             is_flushing: Mutex::new(false),
         })
@@ -280,7 +288,7 @@ mod tests {
         };
         
         let log_manager = LogManager::new(config).unwrap();
-        assert_eq!(log_manager.current_lsn(), 0);
+        assert_eq!(log_manager.current_lsn(), 1);
     }
     
     #[test]
@@ -313,7 +321,7 @@ mod tests {
             )
         ).unwrap();
         
-        assert_eq!(lsn1, 0);
+        assert_eq!(lsn1, 1);
         
         // Append an UPDATE record
         let lsn2 = log_manager.append_log_record(
@@ -331,6 +339,6 @@ mod tests {
             )
         ).unwrap();
         
-        assert_eq!(lsn2, 1);
+        assert_eq!(lsn2, 2);
     }
 } 

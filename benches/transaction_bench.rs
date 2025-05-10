@@ -66,7 +66,7 @@ fn insert_test_record(buffer_pool: &Arc<BufferPoolManager>, txn_id: u32, txn_man
     let rid = page_manager.insert_record(&mut page_guard, record_data).unwrap();
     
     // Log the insertion
-    let lsn = txn.log_insert(0, page_id, rid, record_data).unwrap();
+    let lsn = txn.log_insert(0, page_id, rid.slot_num, record_data).unwrap();
     
     // Update page LSN
     page_guard.lsn = lsn;

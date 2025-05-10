@@ -18,6 +18,7 @@ pub use self::validation::{TypeValidator, ValidationError, ValidationResult};
 use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // Global catalog instance using a thread-safe lazy initialization
 static CATALOG_INSTANCE: Lazy<Arc<RwLock<Catalog>>> = Lazy::new(|| {
@@ -30,6 +31,7 @@ static CATALOG_INSTANCE: Lazy<Arc<RwLock<Catalog>>> = Lazy::new(|| {
     let catalog = Catalog {
         schemas: RwLock::new(schemas),
         current_schema: RwLock::new("public".to_string()),
+        table_id_counter: AtomicU32::new(1),
     };
     
     Arc::new(RwLock::new(catalog))
@@ -41,6 +43,8 @@ pub struct Catalog {
     schemas: RwLock<HashMap<String, Schema>>,
     /// Current schema name
     current_schema: RwLock<String>,
+    /// Counter for assigning unique table IDs
+    table_id_counter: AtomicU32,
 }
 
 impl Catalog {
@@ -60,6 +64,7 @@ impl Catalog {
         Catalog {
             schemas: RwLock::new(schemas),
             current_schema: RwLock::new("public".to_string()),
+            table_id_counter: AtomicU32::new(1),
         }
     }
     
@@ -99,11 +104,13 @@ impl Catalog {
     }
     
     /// Create a table in the current schema
-    pub fn create_table(&self, table: Table) -> Result<(), String> {
+    pub fn create_table(&self, mut table: Table) -> Result<(), String> {
         let schema_name = self.current_schema.read().unwrap().clone();
-        let mut schemas = self.schemas.write().unwrap();
+        let mut schemas_guard = self.schemas.write().unwrap();
         
-        if let Some(schema) = schemas.get_mut(&schema_name) {
+        if let Some(schema) = schemas_guard.get_mut(&schema_name) {
+            let new_id = self.table_id_counter.fetch_add(1, Ordering::SeqCst);
+            table.set_id(new_id);
             schema.add_table(table)
         } else {
             Err(format!("Schema {} does not exist", schema_name))
@@ -155,6 +162,18 @@ impl Catalog {
         match self.schemas.get_mut().unwrap().get_mut(&schema_name) {
             Some(schema) => schema.drop_table(table_name),
             None => Err(format!("Schema {} not found when trying to drop table {}", schema_name, table_name)),
+        }
+    }
+
+    /// Get the ID of a table in the current schema
+    pub fn get_table_id(&self, table_name: &str) -> Option<u32> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let schemas = self.schemas.read().unwrap();
+        
+        if let Some(schema) = schemas.get(&schema_name) {
+            schema.get_table(table_name).map(|t| t.id())
+        } else {
+            None
         }
     }
 } 

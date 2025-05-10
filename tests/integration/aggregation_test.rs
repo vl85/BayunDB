@@ -8,6 +8,9 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use bayundb::catalog::Catalog;
 use std::sync::RwLock;
+use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
+use bayundb::transaction::wal::log_buffer::LogBufferConfig;
+use bayundb::transaction::concurrency::TransactionManager;
 
 #[test]
 fn test_count_query() -> Result<()> {
@@ -229,6 +232,9 @@ fn test_end_to_end_count_query() -> Result<()> {
     // Create a temporary database for testing
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test_agg_count.db");
+    let wal_dir = temp_dir.path().join("test_agg_count_wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let log_file_base_name = "agg_count_wal".to_string();
     
     // Initialize buffer pool
     let buffer_pool = Arc::new(BufferPoolManager::new(
@@ -237,8 +243,20 @@ fn test_end_to_end_count_query() -> Result<()> {
     ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
     
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir,
+        log_file_base_name,
+        max_log_file_size: 10 * 1024 * 1024, // 10MB
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc, transaction_manager);
     
     // Simple COUNT(*) query
     let sql = "SELECT COUNT(*) FROM test_table";
@@ -273,20 +291,31 @@ fn test_end_to_end_count_query() -> Result<()> {
 #[test]
 #[ignore] // Temporarily skip until parser is updated to handle complex expressions
 fn test_end_to_end_group_by_query() -> Result<()> {
-    // Create a temporary database for testing
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test_agg_group_by.db");
-    
-    // Initialize buffer pool
+    let wal_dir = temp_dir.path().join("test_agg_group_by_wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let log_file_base_name = "agg_group_by_wal".to_string();
+
     let buffer_pool = Arc::new(BufferPoolManager::new(
-        100, // buffer pool size
+        100,
         db_path.to_str().unwrap().to_string()
-    ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
-    
+    )?);
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-    // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
+
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir,
+        log_file_base_name,
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc, transaction_manager);
+
+    // Create a test table
     // Group by query - group by department_id which is a modulo of id
     // This will create groups 0, 1, 2, 3, 4 (with id % 5)
     let sql = "SELECT id % 5 as department_id, COUNT(*) FROM test_table GROUP BY id % 5";
@@ -324,20 +353,30 @@ fn test_end_to_end_group_by_query() -> Result<()> {
 #[test]
 #[ignore] // Temporarily skip until parser is updated to handle complex expressions
 fn test_end_to_end_aggregation_functions() -> Result<()> {
-    // Create a temporary database for testing
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test_agg_functions.db");
-    
-    // Initialize buffer pool
+    let wal_dir = temp_dir.path().join("test_agg_functions_wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let log_file_base_name = "agg_functions_wal".to_string();
+
     let buffer_pool = Arc::new(BufferPoolManager::new(
-        100, // buffer pool size
+        100,
         db_path.to_str().unwrap().to_string()
-    ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
-    
+    )?);
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-    // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
-    
+
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir,
+        log_file_base_name,
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc, transaction_manager);
+
     // Query with multiple aggregate functions
     let sql = "SELECT MIN(id), MAX(id), SUM(id), AVG(id), COUNT(*) FROM test_table";
     
@@ -407,20 +446,30 @@ fn test_end_to_end_aggregation_functions() -> Result<()> {
 #[test]
 #[ignore] // Temporarily skip until parser is updated to handle complex expressions
 fn test_end_to_end_having_clause() -> Result<()> {
-    // Create a temporary database for testing
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test_agg_having.db");
-    
-    // Initialize buffer pool
+    let wal_dir = temp_dir.path().join("test_agg_having_wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let log_file_base_name = "agg_having_wal".to_string();
+
     let buffer_pool = Arc::new(BufferPoolManager::new(
-        100, // buffer pool size
+        100,
         db_path.to_str().unwrap().to_string()
-    ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
-    
+    )?);
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-    // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
-    
+
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir,
+        log_file_base_name,
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc, transaction_manager);
+
     // Query with GROUP BY and HAVING
     // We'll group by id % 5 (creating 5 groups) and filter for groups with count > 3
     let sql = "SELECT id % 5 as group_id, COUNT(*) FROM test_table GROUP BY id % 5 HAVING COUNT(*) > 3";
@@ -454,20 +503,30 @@ fn test_end_to_end_having_clause() -> Result<()> {
 #[test]
 #[ignore] // Temporarily skip until parser is updated to handle complex expressions
 fn test_end_to_end_complex_grouping() -> Result<()> {
-    // Create a temporary database for testing
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test_agg_complex.db");
-    
-    // Initialize buffer pool
+    let wal_dir = temp_dir.path().join("test_agg_complex_wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let log_file_base_name = "agg_complex_wal".to_string();
+
     let buffer_pool = Arc::new(BufferPoolManager::new(
-        100, // buffer pool size
+        100,
         db_path.to_str().unwrap().to_string()
-    ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
-    
+    )?);
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-    // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
+
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir,
+        log_file_base_name,
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc, transaction_manager);
+
     // Complex query with multiple group by columns, filter, and multiple aggregates
     let sql = "SELECT id % 3 as dept_id, id % 2 as job_type, COUNT(*), MIN(id), MAX(id) 
                FROM test_table 
@@ -527,23 +586,43 @@ fn test_end_to_end_complex_grouping() -> Result<()> {
 #[test]
 #[ignore] // Temporarily skip until Hash vs Sort aggregation strategy is implemented
 fn test_hash_vs_sort_aggregation() -> Result<()> {
-    // Create a temporary database for testing
     let temp_dir = tempdir()?;
     let db_path = temp_dir.path().join("test_agg_hash_sort.db");
-    
-    // Initialize buffer pool
+    let wal_dir = temp_dir.path().join("test_agg_hash_sort_wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let log_file_base_name_prefix = "agg_hash_sort_wal".to_string();
+
     let buffer_pool = Arc::new(BufferPoolManager::new(
-        100, // buffer pool size
+        100,
         db_path.to_str().unwrap().to_string()
-    ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
-    
+    )?);
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
-    // Create execution engine for hash aggregation
-    let engine_hash = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
-    
-    // Create execution engine for sort aggregation
-    let engine_sort = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
-    
+
+    // Config for hash aggregation engine
+    let log_manager_config_hash = LogManagerConfig {
+        log_dir: wal_dir.clone(), // Clone for this specific config
+        log_file_base_name: format!("{}_hash", log_file_base_name_prefix),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager_hash = Arc::new(LogManager::new(log_manager_config_hash).unwrap());
+    let transaction_manager_hash = Arc::new(TransactionManager::new(log_manager_hash.clone()));
+    let engine_hash = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager_hash);
+
+    // Config for sort aggregation engine
+    let log_manager_config_sort = LogManagerConfig {
+        log_dir: wal_dir, // Can reuse wal_dir if LogManager handles distinct file names
+        log_file_base_name: format!("{}_sort", log_file_base_name_prefix),
+        max_log_file_size: 10 * 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: false,
+    };
+    let log_manager_sort = Arc::new(LogManager::new(log_manager_config_sort).unwrap());
+    let transaction_manager_sort = Arc::new(TransactionManager::new(log_manager_sort.clone()));
+    let engine_sort = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager_sort);
+
+    // Create a test table for hash aggregation
     // The query to test
     let sql = "SELECT id % 7 as group_id, COUNT(*), SUM(id), MIN(id), MAX(id) 
                FROM test_table 

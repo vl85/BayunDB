@@ -1,5 +1,5 @@
 use bayundb::storage::page::PageManager;
-use bayundb::common::types::Page;
+use bayundb::common::types::{Page, Rid};
 use anyhow::Result;
 
 mod common;
@@ -28,7 +28,7 @@ fn test_insert_retrieve_record() -> Result<()> {
     let rid = page_manager.insert_record(&mut page, test_data)?;
     
     // Check that the RID is valid
-    assert_eq!(rid, 0);
+    assert_eq!(rid, Rid::new(1, 0));
     
     // Retrieve the record
     let retrieved_data = page_manager.get_record(&page, rid)?;
@@ -158,7 +158,7 @@ fn test_page_compaction() -> Result<()> {
     let expected_records = vec![&records[0], &records[2], &records[4]];
     
     for i in 0..expected_records.len() {
-        let result = page_manager.get_record(&page, i as u32);
+        let result = page_manager.get_record(&page, Rid::new(1, i as u32));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), *expected_records[i]);
     }

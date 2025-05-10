@@ -84,8 +84,14 @@ impl OperatorBuilder {
                 // Build the input operator
                 let input_op = self.build_operator_tree(input)?;
                 
+                // columns is already Vec<String>
+                let projection_column_names: Vec<String> = columns.clone();
+                
+                // Get the alias of the input plan node to ProjectOperator
+                let input_alias_str = get_plan_alias(input, "proj_input");
+
                 // Create a projection operator on top
-                create_projection(input_op, columns.clone())
+                create_projection(input_op, projection_column_names, input_alias_str)
             }
             
             PhysicalPlan::Materialize { input } => {

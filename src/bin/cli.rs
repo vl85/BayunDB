@@ -14,6 +14,7 @@ use bayundb::transaction::wal::log_buffer::LogBufferConfig;
 use bayundb::query::executor::engine::ExecutionEngine;
 use bayundb::query::executor::result::{QueryResult, QueryResultSet, Row, DataValue};
 use bayundb::catalog::Catalog;
+use bayundb::transaction::concurrency::TransactionManager;
 
 const HISTORY_FILE: &str = ".bayundb_history";
 
@@ -61,18 +62,19 @@ struct Database {
     page_manager: PageManager,
     btree_index: BTreeIndex<i32>,
     log_manager: Arc<LogManager>,
+    transaction_manager: Arc<TransactionManager>,
     execution_engine: ExecutionEngine,
 }
 
 impl Database {
     fn new(db_path: &str, log_dir: &str, buffer_size: usize) -> Result<Self> {
         // Create logs directory if it doesn't exist
-        let log_dir = PathBuf::from(log_dir);
-        std::fs::create_dir_all(&log_dir)?;
+        let log_dir_path = PathBuf::from(log_dir);
+        std::fs::create_dir_all(&log_dir_path)?;
         
         // Configure log manager
         let log_config = LogManagerConfig {
-            log_dir,
+            log_dir: log_dir_path,
             log_file_base_name: "bayun_log".to_string(),
             max_log_file_size: 1024 * 1024, // 1 MB
             buffer_config: LogBufferConfig::default(),
@@ -98,14 +100,18 @@ impl Database {
         // Get the global catalog instance for the live environment
         let catalog_arc = Catalog::instance();
 
+        // Create TransactionManager
+        let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+
         // Create execution engine
-        let execution_engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc);
+        let execution_engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc, transaction_manager.clone());
         
         Ok(Database {
             buffer_pool,
             page_manager,
             btree_index,
             log_manager,
+            transaction_manager,
             execution_engine,
         })
     }
@@ -115,50 +121,9 @@ impl Database {
         println!("Executing query: {}", query);
         
         // Execute the query using the execution engine
-        match self.execution_engine.execute_query(query) {
-            Ok(result) => {
-                Ok(result)
-            }
-            Err(err) => {
-                // Handle specific errors for better user experience
-                
-                // If this is a CREATE TABLE statement and we have a planning error,
-                // create a result set indicating success rather than an error since
-                // our CREATE TABLE implementation is now working
-                if query.trim().to_uppercase().starts_with("CREATE TABLE") {
-                    // Create a fake success message for CREATE TABLE
-                    let mut result = QueryResultSet::new(vec!["result".to_string()]);
-                    let table_name = extract_table_name(query);
-                    result.add_row(Row::from_values(
-                        vec!["result".to_string()],
-                        vec![DataValue::Text(format!("Table {} created successfully", table_name))]
-                    ));
-                    return Ok(result);
-                }
-                
-                // Otherwise, propagate the error
-                Err(err)
-            }
-        }
+        // The ExecutionEngine now handles returning a proper QueryResultSet for CREATE TABLE.
+        self.execution_engine.execute_query(query)
     }
-}
-
-// Helper function to extract table name from CREATE TABLE queries
-fn extract_table_name(query: &str) -> String {
-    // Basic regex-free extraction for CREATE TABLE
-    let upper_query = query.to_uppercase();
-    let after_create_table = upper_query.trim_start_matches("CREATE TABLE").trim();
-    
-    // Get the first word which should be the table name
-    // Either up to first space or parenthesis
-    let table_name = after_create_table.split_whitespace()
-        .next()
-        .unwrap_or("unknown")
-        .split('(')
-        .next()
-        .unwrap_or("unknown");
-    
-    table_name.to_string()
 }
 
 fn run_shell(db: &Database) -> Result<()> {

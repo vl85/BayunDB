@@ -330,13 +330,32 @@ mod tests {
             "BINARY", 
             "UNKNOWN_TYPE",
             "VARCHAR(", // Unterminated size
-            "INTEGER EXTRA_TOKEN" // Trailing token
+            "INTEGER EXTRA_TOKEN", // Trailing token
         ];
 
         for type_str in error_cases {
             let mut parser = Parser::new(type_str);
             let result = parse_data_type(&mut parser);
-            assert!(result.is_err(), "Expected error for data type: {}", type_str);
+
+            if type_str == "INTEGER EXTRA_TOKEN" {
+                // parse_data_type successfully parses "INTEGER" and leaves "EXTRA_TOKEN".
+                // This is not an error for parse_data_type itself.
+                // The calling parser rule would handle "EXTRA_TOKEN".
+                assert!(result.is_ok(), "parse_data_type should parse INTEGER from '{}'", type_str);
+                if let Ok(data_type) = result {
+                    assert_eq!(data_type, DataType::Integer, "Parsed type should be Integer for '{}'", type_str);
+                }
+                // Check that EXTRA_TOKEN is indeed the current token
+                assert!(parser.current_token.is_some(), "EXTRA_TOKEN should remain for '{}'", type_str);
+                match parser.current_token.as_ref().unwrap().token_type {
+                    TokenType::IDENTIFIER(ref val) => {
+                        assert_eq!(val, "EXTRA_TOKEN", "Expected IDENTIFIER to be EXTRA_TOKEN");
+                    }
+                    _ => panic!("Expected EXTRA_TOKEN to be an IDENTIFIER")
+                }
+            } else {
+                assert!(result.is_err(), "Expected error for data type: {}", type_str);
+            }
         }
         
         // Test parsing literal number as data type (should use IDENTIFIER path)

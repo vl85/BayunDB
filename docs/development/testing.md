@@ -14,6 +14,7 @@ This guide provides comprehensive information about testing BayunDB, including t
 - [Mocking and Fixtures](#mocking-and-fixtures)
 - [Continuous Integration](#continuous-integration)
 - [Testing Best Practices](#testing-best-practices)
+- [Key Areas for Test Coverage](#key-areas-for-test-coverage)
 
 ## Test Organization
 
@@ -418,3 +419,158 @@ All tests run in CI when changes are pushed:
 3. **Disk space issues**:
    - Clean up temporary files after tests
    - Use smaller data sets for regular testing 
+
+## Key Areas for Test Coverage
+
+While the sections above describe how to organize, run, and write tests, this section focuses on *what* to test to ensure comprehensive coverage of BayunDB's functionality. The goal is to create a robust test suite that verifies correctness, handles edge cases, and ensures performance.
+
+### 1. Data Manipulation Language (DML) Operations
+
+-   **`INSERT`:**
+    -   Basic inserts of single and multiple rows.
+    -   Inserts with all supported data types.
+    -   Inserts with `NULL` values (for nullable columns).
+    -   Inserts that violate constraints (e.g., PRIMARY KEY, UNIQUE, NOT NULL, CHECK - if supported).
+    -   Inserts into tables with many columns or large row sizes.
+    -   Inserts from `SELECT` statements (if supported).
+-   **`SELECT`:**
+    -   `SELECT *` and `SELECT` with specific columns.
+    -   `WHERE` clauses:
+        -   Simple conditions (e.g., `=`, `>`, `<`, `!=`, `>=`, `<=`).
+        -   Complex conditions with `AND`, `OR`, `NOT`, parentheses.
+        -   Operators like `LIKE`, `BETWEEN`, `IN`.
+        -   Conditions involving `NULL` values (`IS NULL`, `IS NOT NULL`).
+        -   Conditions on various data types.
+    -   `ORDER BY` (ASC, DESC, multiple columns, with NULLs).
+    -   `LIMIT` and `OFFSET` for pagination.
+    -   `SELECT DISTINCT`.
+    -   Projections with expressions (e.g., `SELECT col1 + col2, UPPER(col3) ...`).
+    -   Column aliases.
+-   **`UPDATE`:**
+    -   Updating single/multiple rows based on `WHERE` conditions.
+    -   Updating specific columns.
+    -   Setting columns to `NULL`.
+    -   Updates involving expressions.
+    -   Updates that violate constraints.
+    -   Updating rows not matching the `WHERE` clause (no-op).
+-   **`DELETE`:**
+    -   Deleting single/multiple rows based on `WHERE` conditions.
+    -   Deleting all rows from a table (`DELETE FROM table;`).
+    -   Deleting rows not matching the `WHERE` clause (no-op).
+
+### 2. Data Definition Language (DDL) Operations
+
+-   **`CREATE TABLE`:**
+    -   With various column types (integers, floats, text, boolean, date/time, etc.).
+    -   With primary keys (single and composite).
+    -   With unique constraints.
+    -   With not null constraints.
+    -   With foreign key constraints (if supported, including behavior on update/delete).
+    -   With check constraints (if supported).
+    -   Creating tables that already exist (should fail).
+-   **`ALTER TABLE` (if supported):**
+    -   Adding columns (nullable, with defaults).
+    -   Dropping columns.
+    -   Modifying column types (if supported, and implications for existing data).
+    -   Adding/dropping constraints.
+-   **`DROP TABLE`:**
+    -   Dropping existing tables.
+    -   Dropping non-existent tables (should fail gracefully or with notice).
+    -   Dropping tables with dependent objects (e.g., views, foreign keys - if applicable).
+-   **`CREATE INDEX` / `DROP INDEX` (if/when indexes are supported beyond primary keys):**
+    -   On various data types.
+    -   Unique and non-unique indexes.
+    -   Indexes on multiple columns.
+
+### 3. Query Structures and Clauses
+
+-   **Joins:**
+    -   `INNER JOIN`, `LEFT OUTER JOIN`, `RIGHT OUTER JOIN` (if supported), `FULL OUTER JOIN` (if supported).
+    -   Joins on single and multiple columns.
+    -   Joins with non-equality conditions (e.g., `>`, `<` using Nested Loop Join).
+    -   Self-joins.
+    -   Joins involving tables with `NULL`s in join keys.
+    -   Joins with `WHERE` clauses applied before/after the join.
+    -   Three or more table joins.
+-   **Aggregations:**
+    -   `COUNT(*)`, `COUNT(column)`, `COUNT(DISTINCT column)`.
+    -   `SUM()`, `AVG()`, `MIN()`, `MAX()` on various numeric types.
+    -   `GROUP BY` single and multiple columns.
+    -   `HAVING` clause for filtering groups.
+    -   Aggregations on empty tables or empty groups.
+-   **Subqueries (if supported):**
+    -   In `SELECT` list, `FROM` clause, `WHERE` clause.
+    -   Correlated and non-correlated subqueries.
+-   **Set Operations (if supported):**
+    -   `UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`.
+
+### 4. Data Types
+
+-   Ensure all supported data types are tested thoroughly in:
+    -   Table definitions (column types).
+    -   `INSERT` statements (literal values).
+    -   `WHERE` clause comparisons.
+    -   Join conditions.
+    -   Function arguments and return values (if applicable).
+    -   Expressions.
+-   Test type casting and coercion rules (implicit and explicit).
+
+### 5. NULL Value Handling
+
+-   `INSERT` and `UPDATE` with `NULL` values.
+    -   `SELECT` statements where columns can be `NULL`.
+-   `WHERE` clause conditions: `IS NULL`, `IS NOT NULL`.
+-   Behavior of operators and functions with `NULL` inputs.
+-   Joins where join keys might be `NULL`.
+-   Aggregates with `NULL` values (e.g., `AVG` should ignore `NULL`s).
+
+### 6. Transactions and Concurrency
+
+-   **Atomicity:** Ensure transactions are all-or-nothing. Test scenarios where errors occur mid-transaction.
+-   **Consistency:** Data remains consistent before and after transactions.
+-   **Isolation:** (If different isolation levels are supported) Test concurrent transactions for phenomena like dirty reads, non-repeatable reads, phantom reads according to the supported isolation levels.
+-   **Durability:** Committed data survives system restarts (covered by recovery tests but important in transaction context).
+-   `BEGIN`, `COMMIT`, `ROLLBACK` statements.
+-   Deadlock detection and resolution (if applicable).
+-   Long-running transactions.
+
+### 7. Error Handling and Edge Cases
+
+-   Invalid SQL syntax for all statement types.
+-   Operations on non-existent tables, columns, indexes.
+-   Type mismatches in expressions or assignments.
+-   Arithmetic errors (division by zero, overflow - if applicable).
+-   Constraint violations (PK, FK, UNIQUE, NOT NULL, CHECK).
+-   Operations on empty tables.
+-   Queries that return no results.
+-   Queries that return very large result sets.
+-   Resource limits (e.g., max table name length, max columns per table, max row size - if any).
+
+### 8. Recovery (WAL and Checkpointing)
+
+-   Crash recovery scenarios:
+    -   Crash during an `INSERT`, `UPDATE`, or `DELETE` operation (before commit).
+    -   Crash after a `COMMIT` but before data is fully flushed from buffer pool.
+    -   Crash during a `CHECKPOINT`.
+-   Verification of data integrity after recovery.
+-   Performance of recovery process.
+-   Correct LSN (Log Sequence Number) management.
+
+### 9. Performance and Benchmarking
+
+(While `benches/` directory exists for Criterion benchmarks, this section refers to specific scenarios for performance consideration in integration tests or dedicated performance tests beyond micro-benchmarks)
+-   Query execution time for complex queries on large datasets.
+-   Insert/update/delete throughput.
+-   Join performance for different join algorithms and data distributions.
+-   Index impact on query performance (scans vs. lookups).
+-   Concurrency impact on throughput.
+-   Memory usage under load.
+
+### 10. CLI (Command Line Interface)
+
+-   Test all CLI commands and options.
+-   Interactive mode and batch execution (from file).
+-   Correct output formatting.
+-   Error reporting and exit codes.
+
+This list is not exhaustive but provides a strong foundation for building a comprehensive test suite. As new features are added to BayunDB, corresponding test coverage should be planned and implemented. 

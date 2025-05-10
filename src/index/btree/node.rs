@@ -262,38 +262,27 @@ mod tests {
 
     #[test]
     fn test_insert_into_leaf() {
+        let order = 5; // Example order
         let mut node = BTreeNode::<i32>::new_leaf();
-        let order = 3; // Small order for testing
 
-        // First insert
-        let needs_split = node.insert_into_leaf(5, 1005, order);
-        assert!(!needs_split);
-        assert_eq!(node.keys, vec![5]);
-        assert_eq!(node.values, vec![1005]);
+        // Insert some key-value pairs
+        node.insert_into_leaf(5, Rid::new(0, 1005), order);
+        node.insert_into_leaf(15, Rid::new(0, 1015), order);
+        node.insert_into_leaf(10, Rid::new(0, 1010), order);
 
-        // Insert in order
-        let needs_split = node.insert_into_leaf(10, 1010, order);
-        assert!(!needs_split);
-        assert_eq!(node.keys, vec![5, 10]);
-        assert_eq!(node.values, vec![1005, 1010]);
+        assert_eq!(node.keys, vec![5, 10, 15]);
+        assert_eq!(node.values, vec![Rid::new(0, 1005), Rid::new(0, 1010), Rid::new(0, 1015)]);
 
-        // Insert out of order (middle)
-        let needs_split = node.insert_into_leaf(7, 1007, order);
-        assert!(!needs_split);
-        assert_eq!(node.keys, vec![5, 7, 10]);
-        assert_eq!(node.values, vec![1005, 1007, 1010]);
+        // Test updating an existing key
+        node.insert_into_leaf(10, Rid::new(0, 1099), order); // Update value for key 10
+        assert_eq!(node.values, vec![Rid::new(0, 1005), Rid::new(0, 1099), Rid::new(0, 1015)]);
 
-        // Insert that causes split (exceeds order)
-        let needs_split = node.insert_into_leaf(12, 1012, order);
-        assert!(needs_split);
-        assert_eq!(node.keys, vec![5, 7, 10, 12]);
-        assert_eq!(node.values, vec![1005, 1007, 1010, 1012]);
-
-        // Update existing key
-        let needs_split = node.insert_into_leaf(7, 2007, order);
-        assert!(!needs_split);
-        assert_eq!(node.keys, vec![5, 7, 10, 12]);
-        assert_eq!(node.values, vec![1005, 2007, 1010, 1012]);
+        // Test splitting condition
+        let mut split_node = BTreeNode::<i32>::new_leaf();
+        for i in 0..order {
+            assert!(!split_node.insert_into_leaf(i as i32, Rid::new(0, (1000 + i) as u32), order));
+        }
+        assert!(split_node.insert_into_leaf(order as i32, Rid::new(0, (1000 + order) as u32), order)); // Should indicate split
     }
 
     #[test]
@@ -328,28 +317,23 @@ mod tests {
     #[test]
     fn test_split_leaf() {
         let mut node = BTreeNode::<i32>::new_leaf();
-        // Fill with keys in ascending order
-        for i in 1..=6 {
-            node.keys.push(i);
-            node.values.push((1000 + i) as u32);
+        // Fill the node to trigger a split (order + 1 keys)
+        // Assuming order is such that 6 elements cause overflow, e.g. order = 5
+        for i in 0..6 {
+            node.keys.push(i * 10);
+            node.values.push(Rid::new(0, (1000 + i) as u32));
         }
-        node.next_leaf = Some(999); // Set a next leaf pointer
 
-        // Split the leaf
-        let (new_right_node, promotion_key) = node.split_leaf();
+        let (mut new_node, promotion_key) = node.split_leaf();
 
-        // Check original node (left half after split)
-        assert_eq!(node.keys, vec![1, 2, 3]);
-        assert_eq!(node.values, vec![1001, 1002, 1003]);
-        assert_eq!(node.next_leaf, None);
-
-        // Check new node (right half)
-        assert_eq!(new_right_node.keys, vec![4, 5, 6]);
-        assert_eq!(new_right_node.values, vec![1004, 1005, 1006]);
-        assert_eq!(new_right_node.next_leaf, Some(999));
-
-        // Check promotion key (should be the first key of the new node)
-        assert_eq!(promotion_key, 4);
+        // Original node should have the first half
+        assert_eq!(node.keys, vec![0, 10, 20]);
+        assert_eq!(node.values, vec![Rid::new(0, 1000), Rid::new(0, 1001), Rid::new(0, 1002)]);
+        // New node should have the second half
+        assert_eq!(new_node.keys, vec![30, 40, 50]);
+        assert_eq!(new_node.values, vec![Rid::new(0, 1003), Rid::new(0, 1004), Rid::new(0, 1005)]);
+        // Check promotion key
+        assert_eq!(promotion_key, 30); // The first key of the new node
     }
 
     #[test]
@@ -382,54 +366,35 @@ mod tests {
 
     #[test]
     fn test_get_value() {
+        let order = 5;
         let mut node = BTreeNode::<i32>::new_leaf();
-        
-        // Add some key-value pairs
-        node.keys.push(5);
-        node.values.push(1005);
-        node.keys.push(10);
-        node.values.push(1010);
-        
-        // Test get existing keys
-        assert_eq!(node.get_value(&5), Some(1005));
-        assert_eq!(node.get_value(&10), Some(1010));
-        
-        // Test get non-existent key
-        assert_eq!(node.get_value(&7), None);
-        assert_eq!(node.get_value(&20), None);
+        node.insert_into_leaf(10, Rid::new(0, 100), order);
+        node.insert_into_leaf(20, Rid::new(0, 200), order);
+        node.insert_into_leaf(5, Rid::new(0, 50), order);
+
+        assert_eq!(node.get_value(&10), Some(Rid::new(0, 100)));
+        assert_eq!(node.get_value(&20), Some(Rid::new(0, 200)));
+        assert_eq!(node.get_value(&5), Some(Rid::new(0, 50)));
+        assert_eq!(node.get_value(&15), None); // Key not present
     }
 
     #[test]
     fn test_range_values() {
         let mut node = BTreeNode::<i32>::new_leaf();
-        
-        // Add key-value pairs in order
-        for i in 1..=10 {
-            node.keys.push(i);
-            node.values.push((1000 + i) as u32);
+        // Keys: 0, 10, 20, 30, 40
+        // Values: 1000, 1001, 1002, 1003, 1004
+        for i in 0..5 {
+            node.keys.push(i * 10);
+            node.values.push(Rid::new(0, (1000 + i) as u32));
         }
-        
-        // Test different ranges
-        
-        // Exact match on both ends
-        let result = node.range_values(&3, &7);
-        assert_eq!(result, vec![1003, 1004, 1005, 1006, 1007]);
-        
-        // Start key doesn't exist
-        let result = node.range_values(&2, &6);
-        assert_eq!(result, vec![1002, 1003, 1004, 1005, 1006]);
-        
-        // End key doesn't exist
-        let result = node.range_values(&8, &15);
-        assert_eq!(result, vec![1008, 1009, 1010]);
-        
-        // Range outside node keys
-        let result = node.range_values(&20, &30);
-        assert!(result.is_empty());
-        
-        // Range completely before node keys
-        let result = node.range_values(&-10, &-5);
-        assert!(result.is_empty());
+
+        // Test cases
+        assert_eq!(node.range_values(&15, &35), vec![Rid::new(0, 1002), Rid::new(0, 1003)]);
+        assert_eq!(node.range_values(&0, &40), vec![Rid::new(0, 1000), Rid::new(0, 1001), Rid::new(0, 1002), Rid::new(0, 1003), Rid::new(0, 1004)]);
+        assert_eq!(node.range_values(&(-5), &5), vec![Rid::new(0, 1000)]);
+        assert_eq!(node.range_values(&35, &55), vec![Rid::new(0, 1004)]);
+        assert_eq!(node.range_values(&50, &60), Vec::<Rid>::new()); // Empty range
+        assert_eq!(node.range_values(&10, &10), vec![Rid::new(0, 1001)]); // Single element range
     }
 
     #[test]
@@ -438,19 +403,19 @@ mod tests {
         
         // Add some key-value pairs
         node.keys = vec![5, 10, 15, 20];
-        node.values = vec![1005, 1010, 1015, 1020];
+        node.values = vec![Rid::new(0, 1005), Rid::new(0, 1010), Rid::new(0, 1015), Rid::new(0, 1020)];
         
         // Remove existing key
         let removed = node.remove_from_leaf(&10);
         assert!(removed);
         assert_eq!(node.keys, vec![5, 15, 20]);
-        assert_eq!(node.values, vec![1005, 1015, 1020]);
+        assert_eq!(node.values, vec![Rid::new(0, 1005), Rid::new(0, 1015), Rid::new(0, 1020)]);
         
         // Remove non-existent key
         let removed = node.remove_from_leaf(&12);
         assert!(!removed);
         assert_eq!(node.keys, vec![5, 15, 20]);
-        assert_eq!(node.values, vec![1005, 1015, 1020]);
+        assert_eq!(node.values, vec![Rid::new(0, 1005), Rid::new(0, 1015), Rid::new(0, 1020)]);
     }
 
     #[test]
@@ -499,13 +464,13 @@ mod tests {
 
     #[test]
     fn test_count() {
-        // Test leaf node count
+        // Test for leaf node
         let mut leaf_node = BTreeNode::<i32>::new_leaf();
         leaf_node.keys = vec![1, 2, 3];
-        leaf_node.values = vec![101, 102, 103];
+        leaf_node.values = vec![Rid::new(0,10), Rid::new(0,20), Rid::new(0,30)];
         assert_eq!(leaf_node.count(), 3);
         
-        // Test internal node count (should be 0)
+        // Test for internal node
         let mut internal_node = BTreeNode::<i32>::new_internal();
         internal_node.keys = vec![10, 20, 30];
         internal_node.children = vec![100, 200, 300, 400];

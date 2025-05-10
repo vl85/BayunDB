@@ -9,19 +9,50 @@ use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::catalog::{Catalog, DataType};
 use tempfile::NamedTempFile;
 use std::sync::RwLock;
+use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
+use bayundb::transaction::concurrency::TransactionManager;
+use bayundb::transaction::wal::log_buffer::LogBufferConfig;
+use std::path::PathBuf;
 
 // Helper function to create an execution engine with a temporary database and a fresh catalog
 fn create_test_engine() -> (ExecutionEngine, NamedTempFile, Arc<RwLock<Catalog>>) {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
-    let path = temp_file.path().to_str().unwrap().to_string();
+    let temp_file_path = temp_file.path();
+    let db_path_str = temp_file_path.to_str().unwrap().to_string();
+
+    let wal_dir = temp_file_path.parent().map_or_else(
+        || PathBuf::from("."), 
+        |p| p.to_path_buf()
+    );
+
+    let log_file_base_name = temp_file_path
+        .file_stem()
+        .unwrap_or_default() 
+        .to_string_lossy()   
+        .into_owned();       
     
     // Create buffer pool manager
-    let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let buffer_pool = Arc::new(BufferPoolManager::new(100, db_path_str).unwrap());
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+
+    // Create LogManagerConfig
+    let log_manager_config = LogManagerConfig {
+        log_dir: wal_dir,
+        log_file_base_name,
+        max_log_file_size: 10 * 1024 * 1024, // 10MB
+        buffer_config: LogBufferConfig::default(), // Default LogBufferConfig
+        force_sync: false, // false for tests is usually fine
+    };
+    
+    // Create LogManager
+    let log_manager = Arc::new(LogManager::new(log_manager_config).unwrap());
+
+    // Create TransactionManager
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
     
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool, catalog_arc.clone());
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc.clone(), transaction_manager);
     
     (engine, temp_file, catalog_arc)
 }

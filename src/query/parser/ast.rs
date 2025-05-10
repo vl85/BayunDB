@@ -120,6 +120,40 @@ pub enum Expression {
     },
 }
 
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expression::Literal(val) => write!(f, "{}", val),
+            Expression::Column(col_ref) => {
+                if let Some(table) = &col_ref.table {
+                    write!(f, "{}.{}", table, col_ref.name)
+                } else {
+                    write!(f, "{}", col_ref.name)
+                }
+            }
+            Expression::BinaryOp { left, op, right } => write!(f, "({} {} {})", left, op, right),
+            Expression::Function { name, args } => {
+                let arg_list = args.iter().map(|arg| arg.to_string()).collect::<Vec<String>>().join(", ");
+                write!(f, "{}({})", name, arg_list)
+            }
+            Expression::Aggregate { function, arg } => {
+                let func_name = match function {
+                    AggregateFunction::Count => "COUNT",
+                    AggregateFunction::Sum => "SUM",
+                    AggregateFunction::Avg => "AVG",
+                    AggregateFunction::Min => "MIN",
+                    AggregateFunction::Max => "MAX",
+                };
+                if let Some(arg_expr) = arg {
+                    write!(f, "{}({})", func_name, arg_expr)
+                } else {
+                    write!(f, "{}(*)", func_name)
+                }
+            }
+        }
+    }
+}
+
 /// SQL values
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -128,6 +162,18 @@ pub enum Value {
     Float(f64),
     String(String),
     Boolean(bool),
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Null => write!(f, "NULL"),
+            Value::Integer(i) => write!(f, "{}", i),
+            Value::Float(fl) => write!(f, "{}", fl),
+            Value::String(s) => write!(f, "'{}'", s), // typically strings are quoted
+            Value::Boolean(b) => write!(f, "{}", if *b { "TRUE" } else { "FALSE" }),
+        }
+    }
 }
 
 /// SQL operators
@@ -150,6 +196,27 @@ pub enum Operator {
     Multiply,
     Divide,
     Modulo,
+}
+
+impl fmt::Display for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operator::Equals => write!(f, "="),
+            Operator::NotEquals => write!(f, "!="),
+            Operator::LessThan => write!(f, "<"),
+            Operator::GreaterThan => write!(f, ">"),
+            Operator::LessEquals => write!(f, "<="),
+            Operator::GreaterEquals => write!(f, ">="),
+            Operator::And => write!(f, "AND"),
+            Operator::Or => write!(f, "OR"),
+            Operator::Not => write!(f, "NOT"),
+            Operator::Plus => write!(f, "+"),
+            Operator::Minus => write!(f, "-"),
+            Operator::Multiply => write!(f, "*"),
+            Operator::Divide => write!(f, "/"),
+            Operator::Modulo => write!(f, "%"),
+        }
+    }
 }
 
 impl Operator {

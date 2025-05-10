@@ -15,24 +15,43 @@ use bayundb::storage::buffer::BufferPoolManager;
 use tempfile::NamedTempFile;
 use bayundb::catalog::Catalog;
 use std::sync::RwLock;
+use bayundb::transaction::concurrency::transaction_manager::TransactionManager;
+use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
+use bayundb::transaction::wal::log_buffer::LogBufferConfig;
+use std::path::PathBuf;
+use tempfile::tempdir;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ExecutionEngine Debug Example");
     println!("============================");
     
-    // Create a temporary test database
-    let temp_file = NamedTempFile::new()?;
-    let db_path = temp_file.path().to_str().unwrap().to_string();
+    let temp_db_file = NamedTempFile::new()?;
+    let db_path = temp_db_file.path().to_str().unwrap().to_string();
     println!("Created temporary database at: {}", db_path);
+
+    let temp_log_dir = tempdir()?;
+    let log_path = temp_log_dir.path();
+    println!("Created temporary log directory at: {:?}", log_path);
+
+    let log_manager_config = LogManagerConfig {
+        log_dir: PathBuf::from(log_path),
+        log_file_base_name: "example_wal".to_string(),
+        max_log_file_size: 1024 * 1024,
+        buffer_config: LogBufferConfig::default(),
+        force_sync: true,
+    };
+    let log_manager = Arc::new(LogManager::new(log_manager_config)?);
+    println!("Log manager initialized");
     
-    // Create buffer pool manager with small size
-    let buffer_pool = Arc::new(BufferPoolManager::new(10, db_path)?);
-    println!("Buffer pool initialized");
+    let buffer_pool = Arc::new(BufferPoolManager::new_with_wal(10, db_path, log_manager.clone())?);
+    println!("Buffer pool initialized with WAL");
     
     let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+    let transaction_manager = Arc::new(TransactionManager::new(log_manager.clone()));
+    println!("Transaction manager created");
 
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
+    let engine = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone(), transaction_manager.clone());
     println!("Execution engine created");
     
     // Correct approach to testing: Create a SELECT statement with test_table

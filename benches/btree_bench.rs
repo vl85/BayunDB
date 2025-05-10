@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::index::btree::BTreeIndex;
+use bayundb::common::types::Rid;
 
 // Create temporary db for testing
 fn create_test_environment(buffer_pool_size: usize) -> Arc<BufferPoolManager> {
@@ -42,7 +43,7 @@ fn btree_benchmark(c: &mut Criterion) {
                     idx = 0; // Reset if we've gone through all keys
                 }
                 let key = keys[idx];
-                btree.insert(key, (key as u32) + 1000).unwrap();
+                btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
                 idx += 1;
             });
         });
@@ -56,7 +57,7 @@ fn btree_benchmark(c: &mut Criterion) {
             let mut keys = Vec::with_capacity(size as usize);
             for i in 0..size {
                 let key = i as i32;
-                btree.insert(key, (key as u32) + 1000).unwrap();
+                btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
                 keys.push(key);
             }
             
@@ -84,7 +85,7 @@ fn btree_benchmark(c: &mut Criterion) {
             // Insert sequential keys
             for i in 0..size {
                 let key = i as i32;
-                btree.insert(key, (key as u32) + 1000).unwrap();
+                btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
             }
             
             // Create range scan windows (each scanning 10% of data)
@@ -114,7 +115,7 @@ fn btree_benchmark(c: &mut Criterion) {
             let mut keys = Vec::with_capacity(size as usize);
             for i in 0..size {
                 let key = i as i32;
-                btree.insert(key, (key as u32) + 1000).unwrap();
+                btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
                 keys.push(key);
             }
             
@@ -129,7 +130,7 @@ fn btree_benchmark(c: &mut Criterion) {
                     // If we've removed all keys, repopulate the tree
                     if idx == keys.len() {
                         for &key in &keys {
-                            btree.insert(key, (key as u32) + 1000).unwrap();
+                            btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
                         }
                     }
                     idx = 0;
