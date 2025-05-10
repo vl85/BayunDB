@@ -9,7 +9,6 @@ use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::storage::page::PageManager;
 use bayundb::query::parser::ast::{Expression, ColumnReference, Operator, Value};
 use std::sync::RwLock;
-use bincode;
 use rand;
 
 // Declare the common module for test utilities using a path attribute
@@ -19,7 +18,7 @@ use common::insert_test_data;
 
 /// Helper function to create the a table schema and an empty table
 fn create_test_table_schema(catalog_arc: &Arc<RwLock<Catalog>>, table_name: &str) -> Result<()> {
-    let mut catalog = catalog_arc.write().unwrap();
+    let catalog = catalog_arc.write().unwrap();
     if catalog.get_table(table_name).is_none() {
         let columns = vec![
             Column::new("id".to_string(), DataType::Integer, false, true, None), // PK

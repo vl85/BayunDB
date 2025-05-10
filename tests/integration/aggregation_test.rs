@@ -1,9 +1,8 @@
 use anyhow::{Result, anyhow};
 use bayundb::query::parser::parse;
 use bayundb::query::parser::ast::{Statement, AggregateFunction, Expression};
-use bayundb::query::executor::result::{QueryResultSet, DataValue, QueryError};
+use bayundb::query::executor::result::DataValue;
 use bayundb::query::executor::engine::ExecutionEngine;
-use bayundb::query::planner::Planner;
 use bayundb::storage::buffer::BufferPoolManager;
 use std::sync::Arc;
 use tempfile::tempdir;
