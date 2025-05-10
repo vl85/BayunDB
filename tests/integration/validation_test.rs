@@ -2,7 +2,6 @@
 //
 // This module tests schema validation and type checking
 
-use anyhow::{Result, anyhow};
 use bayundb::catalog::{Catalog, Table, Column, DataType, TypeValidator};
 use bayundb::query::executor::result::{Row, DataValue};
 use bayundb::query::parser::ast::{Expression, Value, Operator, ColumnReference};
@@ -31,7 +30,7 @@ fn test_type_validation() {
     
     // Add the table to the catalog
     {
-        let mut catalog_guard = catalog.write().unwrap();
+        let catalog_guard = catalog.write().unwrap();
         catalog_guard.create_table(table).unwrap();
     }
     

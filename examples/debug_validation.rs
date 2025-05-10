@@ -1,8 +1,7 @@
 use bayundb::catalog::{Catalog, Table, Column, DataType, TypeValidator};
 use bayundb::query::executor::result::{Row, DataValue};
 use bayundb::query::parser::ast::{Expression, Value, Operator, ColumnReference};
-use std::time::{Instant, Duration};
-use std::thread;
+use std::time::Instant;
 
 // Helper function to print elapsed time with message
 fn log_step(step_name: &str, start: Instant) {

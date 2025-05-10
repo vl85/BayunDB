@@ -5,17 +5,12 @@ use bayundb::query::planner::logical::{self, LogicalPlan};
 use bayundb::query::planner::{self as planner, PhysicalPlan};
 use bayundb::query::executor::result::DataValue;
 use bayundb::query::executor::operators::create_table_scan;
-use bayundb::query::executor::operators::join::create_hash_join;
 use std::sync::Arc;
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::TempDir;
 use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::query::executor::operators::join::create_nested_loop_join;
 use bayundb::catalog::{Catalog, Table, Column, DataType};
 use bayundb::storage::page::PageManager;
-use bayundb::query::executor::result::Row;
-use bayundb::query::parser::ast::Expression;
-use bayundb::query::parser::ast::ColumnReference;
-use bayundb::query::parser::ast::Operator;
 use std::sync::RwLock;
 
 // Helper function to set up tables and insert data for join tests

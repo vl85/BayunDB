@@ -454,7 +454,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
     use bayundb::query::executor::result::{Row, DataValue};
-    use std::io::Write;
+    
     
     #[test]
     fn test_display_result_with_empty_set() {

@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 use bayundb::query::executor::engine::ExecutionEngine;
-use bayundb::query::executor::result::QueryResult;
 use bayundb::query::parser::ast::{
     Statement, SelectStatement, TableReference, SelectColumn, ColumnReference
 };
