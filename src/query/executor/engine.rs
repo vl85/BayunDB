@@ -92,10 +92,10 @@ impl ExecutionEngine {
                 let table_name = &alter_stmt.table_name;
                 match &alter_stmt.operation {
                     crate::query::parser::ast::AlterTableOperation::AddColumn(col_def) => {
-                        eprintln!("VERY_UNIQUE_DEBUG_ALTER_ADD_COLUMN_AST_DEFAULT_VALUE: Table='{}', Col='{}', ASTDefaultExpr='{:?}'",
-                            table_name, col_def.name, col_def.default_value
-                        );
-                        std::io::stderr().flush().unwrap_or_default();
+                        // eprintln!("VERY_UNIQUE_DEBUG_ALTER_ADD_COLUMN_AST_DEFAULT_VALUE: Table='{}', Col='{}', ASTDefaultExpr='{:?}'",
+                        //     table_name, col_def.name, col_def.default_value
+                        // );
+                        // std::io::stderr().flush().unwrap_or_default();
 
                         let column = crate::catalog::column::Column::from_column_def(col_def)
                             .map_err(|e| QueryError::ExecutionError(format!("Failed to define column for ADD COLUMN: {}", e)))?;
@@ -113,46 +113,47 @@ impl ExecutionEngine {
                             first_page_id = table_def_for_migration.first_page_id();
                         } 
 
-                        {
-                            let verify_catalog_guard = self.catalog.read().map_err(|_| QueryError::ExecutionError("Failed to lock for verification".to_string()))?;
-                            if let Some(verify_table_def) = verify_catalog_guard.get_table(table_name) {
-                                eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}', Columns AFTER alter within same execute call: {:?}",
-                                    table_name,
-                                    verify_table_def.columns().iter().map(|c| c.name().to_string()).collect::<Vec<_>>());
-                            } else {
-                                eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}' NOT FOUND AFTER ALTER!", table_name);
-                            }
-                            std::io::stderr().flush().unwrap_or_default();
-                        }
+                        // Removed IMMEDIATE_VERIFY_ALTER_ADD debug block
+                        // {
+                        //     let verify_catalog_guard = self.catalog.read().map_err(|_| QueryError::ExecutionError("Failed to lock for verification".to_string()))?;
+                        //     if let Some(verify_table_def) = verify_catalog_guard.get_table(table_name) {
+                        //         eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}', Columns AFTER alter within same execute call: {:?}",
+                        //             table_name,
+                        //             verify_table_def.columns().iter().map(|c| c.name().to_string()).collect::<Vec<_>>());
+                        //     } else {
+                        //         eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}' NOT FOUND AFTER ALTER!", table_name);
+                        //     }
+                        //     std::io::stderr().flush().unwrap_or_default();
+                        // }
 
                         if let Some(pid) = first_page_id {
                             let determined_new_value_for_existing_rows = match &col_def.default_value {
                                 Some(ast_expr) => { 
                                     match ast_expr {
                                         Expression::Literal(literal_ast_val) => { 
-                                            eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Processing Literal default_value for existing rows: AST_Literal='{:?}', Full_ColumnDef='{:?}'", literal_ast_val, col_def);
+                                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Processing Literal default_value for existing rows: AST_Literal='{:?}', Full_ColumnDef='{:?}'", literal_ast_val, col_def);
                                             let target_catalog_schema_type = helper_ast_dt_to_catalog_dt(&col_def.data_type)?;
-                                            eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Target catalog_schema_type for default: {:?}", target_catalog_schema_type);
+                                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Target catalog_schema_type for default: {:?}", target_catalog_schema_type);
                                             let dv = self.ast_value_to_data_value(literal_ast_val, Some(&target_catalog_schema_type))?;
-                                            eprintln!("[ALTER ADD DATAMIGRATION DEBUG] ast_value_to_data_value result: {:?}", dv);
-                                            std::io::stderr().flush().unwrap_or_default();
+                                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] ast_value_to_data_value result: {:?}", dv);
+                                            // std::io::stderr().flush().unwrap_or_default();
                                             dv
                                         }
                                         _ => {
-                                            eprintln!("[ALTER ADD DATAMIGRATION WARNING] Non-literal default expression {:?} found during data migration for ADD COLUMN. Using NULL for existing rows.", ast_expr);
-                                            std::io::stderr().flush().unwrap_or_default();
+                                            // eprintln!("[ALTER ADD DATAMIGRATION WARNING] Non-literal default expression {:?} found during data migration for ADD COLUMN. Using NULL for existing rows.", ast_expr);
+                                            // std::io::stderr().flush().unwrap_or_default();
                                             DataValue::Null                                            
                                         }
                                     }
                                 }
                                 None => {
-                                    eprintln!("[ALTER ADD DATAMIGRATION DEBUG] No default value specified, using DataValue::Null for existing rows.");
-                                    std::io::stderr().flush().unwrap_or_default();
+                                    // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] No default value specified, using DataValue::Null for existing rows.");
+                                    // std::io::stderr().flush().unwrap_or_default();
                                     DataValue::Null
                                 }
                             };
-                            eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Final determined_new_value_for_existing_rows: {:?}", determined_new_value_for_existing_rows);
-                            std::io::stderr().flush().unwrap_or_default();
+                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Final determined_new_value_for_existing_rows: {:?}", determined_new_value_for_existing_rows);
+                            // std::io::stderr().flush().unwrap_or_default();
 
                             let mut rids_to_migrate: Vec<Rid> = Vec::new();
                             let mut current_scan_page_id = Some(pid);
@@ -176,8 +177,8 @@ impl ExecutionEngine {
                                 self.buffer_pool.unpin_page(page_id_val, false)
                                     .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID collection: {}", page_id_val, e)))?;
                             }
-                            eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Found {} RIDs to migrate.", rids_to_migrate.len());
-                            std::io::stderr().flush().unwrap_or_default();
+                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Found {} RIDs to migrate.", rids_to_migrate.len());
+                            // std::io::stderr().flush().unwrap_or_default();
 
                             let mut rows_migrated_count = 0;
                             for rid in rids_to_migrate {
@@ -188,8 +189,8 @@ impl ExecutionEngine {
                                     let bytes = match self.page_manager.get_record(&page_read_guard, rid) {
                                         Ok(b) => b,
                                         Err(PageError::RecordNotFound) => {
-                                            eprintln!("[ALTER ADD DATAMIGRATION WARNING] Record at RID {:?} not found during migration step. Skipping.", rid);
-                                            std::io::stderr().flush().unwrap_or_default();
+                                            // eprintln!("[ALTER ADD DATAMIGRATION WARNING] Record at RID {:?} not found during migration step. Skipping.", rid);
+                                            // std::io::stderr().flush().unwrap_or_default();
                                             drop(page_read_guard);
                                             self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID {:?} not found: {}", rid.page_id, rid, e)))?;
                                             continue; 
@@ -207,8 +208,8 @@ impl ExecutionEngine {
                                 deserialized_row_values.push(determined_new_value_for_existing_rows.clone());
                                 rows_migrated_count += 1;
 
-                                eprintln!("[ALTER ADD DATAMIGRATION DEBUG] RID: {:?}, Migrated Row Values: {:?}", rid, deserialized_row_values);
-                                std::io::stderr().flush().unwrap_or_default();
+                                // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] RID: {:?}, Migrated Row Values: {:?}", rid, deserialized_row_values);
+                                // std::io::stderr().flush().unwrap_or_default();
 
                                 let updated_data_bytes = bincode::serialize(&deserialized_row_values)
                                     .map_err(|e| QueryError::ExecutionError(format!("Data migration: Failed to serialize migrated row for RID {:?}: {}", rid, e)))?;
@@ -224,8 +225,8 @@ impl ExecutionEngine {
                                         .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} (dirty) after RID {:?} write: {}", rid.page_id, rid, e)))?;
                                 }
                             }
-                            eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Total rows migrated: {}", rows_migrated_count);
-                            std::io::stderr().flush().unwrap_or_default();
+                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Total rows migrated: {}", rows_migrated_count);
+                            // std::io::stderr().flush().unwrap_or_default();
                         }
                         
                         let message = format!("Table {} altered, column {} added.", table_name, col_def.name);
@@ -1075,11 +1076,11 @@ impl ExecutionEngine {
             table_columns_for_validation = table_def.columns().to_vec();
         } 
 
-        eprintln!("[EXECUTE_INSERT_VALIDATION_COLS] Table: '{}', Columns for validation: {:?}", 
-            table_name, 
-            table_columns_for_validation.iter().map(|c| c.name().to_string()).collect::<Vec<_>>()
-        );
-        std::io::stderr().flush().unwrap_or_default();
+        // eprintln!("[EXECUTE_INSERT_VALIDATION_COLS] Table: '{}', Columns for validation: {:?}", 
+        //     table_name, 
+        //     table_columns_for_validation.iter().map(|c| c.name().to_string()).collect::<Vec<_>>()
+        // );
+        // std::io::stderr().flush().unwrap_or_default();
 
         // --- Correctly restored logic for values_to_insert --- 
         let values_to_insert: Vec<DataValue>;
@@ -1166,9 +1167,9 @@ impl ExecutionEngine {
         }
         // --- End of restored logic for values_to_insert ---
 
-        eprintln!("[EXECUTE_INSERT DEBUG] Table: '{}', values_to_insert (count {}): {:?}", 
-            table_name, values_to_insert.len(), values_to_insert);
-        std::io::stderr().flush().unwrap_or_default();
+        // eprintln!("[EXECUTE_INSERT DEBUG] Table: '{}', values_to_insert (count {}): {:?}", 
+        //     table_name, values_to_insert.len(), values_to_insert);
+        // std::io::stderr().flush().unwrap_or_default();
 
         let serialized_row = bincode::serialize(&values_to_insert)
             .map_err(|e| {
@@ -1176,8 +1177,8 @@ impl ExecutionEngine {
                 QueryError::ExecutionError(format!("Failed to serialize row: {}", e))
             })?;
         
-        eprintln!("[EXECUTE_INSERT DEBUG] Table: '{}', serialized_row length: {}", table_name, serialized_row.len());
-        std::io::stderr().flush().unwrap_or_default();
+        // eprintln!("[EXECUTE_INSERT DEBUG] Table: '{}', serialized_row length: {}", table_name, serialized_row.len());
+        // std::io::stderr().flush().unwrap_or_default();
 
         // --- Page Operations: Fetch/Create Page, Insert Record ---
         let mut page_was_dirtied = false;

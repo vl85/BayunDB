@@ -32,32 +32,32 @@ impl ProjectionOperator {
     
     /// Project a row to only include the specified columns
     fn project_row(&self, input_row: Row) -> Row {
-        eprintln!("[PROJECT_ROW START] Input Row: {:?}, Self.Columns: {:?}, Self.InputAlias: '{}'", input_row, self.columns, self.input_alias);
+        // eprintln!("[PROJECT_ROW START] Input Row: {:?}, Self.Columns: {:?}, Self.InputAlias: '{}'", input_row, self.columns, self.input_alias);
         let mut projected_row = Row::new();
         
         if self.columns.is_empty() || self.columns.contains(&"*".to_string()) {
-            eprintln!("[PROJECT_ROW] Handling SELECT * case or empty columns.");
+            // eprintln!("[PROJECT_ROW] Handling SELECT * case or empty columns.");
             return input_row;
         }
         
         for output_col_name in &self.columns {
-            eprintln!("[PROJECT_ROW] Processing output column: '{}'", output_col_name);
+            // eprintln!("[PROJECT_ROW] Processing output column: '{}'", output_col_name);
             let qualified_input_col_name = format!("{}.{}", self.input_alias, output_col_name);
             
             let mut found_value: Option<DataValue> = None;
 
             if !self.input_alias.is_empty() {
-                eprintln!("[PROJECT_ROW] Trying qualified name: '{}'", qualified_input_col_name);
+                // eprintln!("[PROJECT_ROW] Trying qualified name: '{}'", qualified_input_col_name);
                 if let Some(value) = input_row.get(&qualified_input_col_name) {
-                    eprintln!("[PROJECT_ROW] Found with qualified name. Value: {:?}", value);
+                    // eprintln!("[PROJECT_ROW] Found with qualified name. Value: {:?}", value);
                     found_value = Some(value.clone());
                 }
             }
 
             if found_value.is_none() {
-                eprintln!("[PROJECT_ROW] Trying direct name: '{}'", output_col_name);
+                // eprintln!("[PROJECT_ROW] Trying direct name: '{}'", output_col_name);
                 if let Some(value) = input_row.get(output_col_name) {
-                    eprintln!("[PROJECT_ROW] Found with direct name. Value: {:?}", value);
+                    // eprintln!("[PROJECT_ROW] Found with direct name. Value: {:?}", value);
                     found_value = Some(value.clone());
                 }
             }
@@ -65,11 +65,11 @@ impl ProjectionOperator {
             if let Some(value_to_set) = found_value {
                 projected_row.set(output_col_name.clone(), value_to_set);
             } else {
-                eprintln!("[PROJECT_ROW] Column '{}' (or its qualified version) NOT FOUND in input row. Setting to Null.", output_col_name);
+                // eprintln!("[PROJECT_ROW] Column '{}' (or its qualified version) NOT FOUND in input row. Setting to Null.", output_col_name);
                 projected_row.set(output_col_name.clone(), DataValue::Null);
             }
         }
-        eprintln!("[PROJECT_ROW END] Projected Row: {:?}", projected_row);
+        // eprintln!("[PROJECT_ROW END] Projected Row: {:?}", projected_row);
         projected_row
     }
 }

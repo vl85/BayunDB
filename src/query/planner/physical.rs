@@ -49,12 +49,9 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
             let mut determined_input_alias = "proj_input_derived_input".to_string(); // Default value
             let found_alias_opt = find_source_alias_for_projection(input);
             
-            eprintln!("[CREATE_PHYS_PLAN_FOR_PROJECTION] Input to LogicalPlan::Projection: {:?}, Found source alias: {:?}", input, found_alias_opt);
-
             if let Some(alias) = found_alias_opt {
                 determined_input_alias = alias; // This is calculated but not stored on PhysicalPlan::Project
             }
-            eprintln!("[CREATE_PHYS_PLAN_FOR_PROJECTION] Calculated determined_input_alias (will be used by OpBuilder): '{}'", determined_input_alias);
             
             PhysicalPlan::Project {
                 columns: columns.clone(),
