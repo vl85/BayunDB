@@ -94,4 +94,9 @@ impl Column {
             default_value: None,  // We don't have default values in our AST yet
         })
     }
+
+    /// Rename the column
+    pub fn rename(&mut self, new_name: &str) {
+        self.name = new_name.to_string();
+    }
 } 

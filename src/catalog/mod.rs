@@ -176,4 +176,49 @@ impl Catalog {
             None
         }
     }
+
+    /// ALTER TABLE: Add a column to a table in the current schema
+    pub fn alter_table_add_column(&self, table_name: &str, column: Column) -> Result<(), String> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let mut schemas_guard = self.schemas.write().unwrap();
+        if let Some(schema) = schemas_guard.get_mut(&schema_name) {
+            if let Some(table) = schema.get_table_mut(table_name) {
+                table.add_column(column)
+            } else {
+                Err(format!("Table {} does not exist in schema {}", table_name, schema_name))
+            }
+        } else {
+            Err(format!("Schema {} does not exist", schema_name))
+        }
+    }
+
+    /// ALTER TABLE: Drop a column from a table in the current schema
+    pub fn alter_table_drop_column(&self, table_name: &str, column_name: &str) -> Result<(), String> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let mut schemas_guard = self.schemas.write().unwrap();
+        if let Some(schema) = schemas_guard.get_mut(&schema_name) {
+            if let Some(table) = schema.get_table_mut(table_name) {
+                table.drop_column(column_name)
+            } else {
+                Err(format!("Table {} does not exist in schema {}", table_name, schema_name))
+            }
+        } else {
+            Err(format!("Schema {} does not exist", schema_name))
+        }
+    }
+
+    /// ALTER TABLE: Rename a column in a table in the current schema
+    pub fn alter_table_rename_column(&self, table_name: &str, old_name: &str, new_name: &str) -> Result<(), String> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let mut schemas_guard = self.schemas.write().unwrap();
+        if let Some(schema) = schemas_guard.get_mut(&schema_name) {
+            if let Some(table) = schema.get_table_mut(table_name) {
+                table.rename_column(old_name, new_name)
+            } else {
+                Err(format!("Table {} does not exist in schema {}", table_name, schema_name))
+            }
+        } else {
+            Err(format!("Schema {} does not exist", schema_name))
+        }
+    }
 } 

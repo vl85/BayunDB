@@ -146,4 +146,39 @@ impl Table {
         schema.push_str("\n);");
         schema
     }
+    
+    /// Drop a column from the table
+    pub fn drop_column(&mut self, column_name: &str) -> Result<(), String> {
+        if !self.has_column(column_name) {
+            return Err(format!("Column {} does not exist in table {}", column_name, self.name));
+        }
+        let idx = self.column_map[column_name];
+        self.columns.remove(idx);
+        self.column_map.remove(column_name);
+        // Rebuild column_map and primary_key_columns
+        self.column_map.clear();
+        self.primary_key_columns.clear();
+        for (i, col) in self.columns.iter().enumerate() {
+            self.column_map.insert(col.name().to_string(), i);
+            if col.is_primary_key() {
+                self.primary_key_columns.push(i);
+            }
+        }
+        Ok(())
+    }
+
+    /// Rename a column in the table
+    pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+        if !self.has_column(old_name) {
+            return Err(format!("Column {} does not exist in table {}", old_name, self.name));
+        }
+        if self.has_column(new_name) {
+            return Err(format!("Column {} already exists in table {}", new_name, self.name));
+        }
+        let idx = self.column_map[old_name];
+        self.columns[idx].rename(new_name);
+        self.column_map.remove(old_name);
+        self.column_map.insert(new_name.to_string(), idx);
+        Ok(())
+    }
 } 

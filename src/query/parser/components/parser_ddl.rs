@@ -56,8 +56,87 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
 
 /// Parse an ALTER statement
 pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
-    // This will be implemented for ALTER TABLE statements
-    Err(ParseError::InvalidSyntax("ALTER statements not implemented yet".to_string()))
+    // Consume ALTER keyword
+    parser.expect_token(TokenType::ALTER)?;
+    // Expect TABLE keyword
+    parser.expect_token(TokenType::TABLE)?;
+    // Parse table name
+    let table_name = parser.parse_identifier()?;
+
+    // Parse operation
+    if parser.current_token_is(TokenType::ADD) {
+        parser.next_token(); // Consume ADD
+        parser.expect_token(TokenType::COLUMN)?;
+        // Parse column definition (reuse CREATE TABLE logic)
+        let col_def = {
+            let name = parser.parse_identifier()?;
+            let data_type = parse_data_type(parser)?;
+            // Parse optional constraints (reuse logic from parse_column_definitions)
+            let mut nullable = true;
+            let mut primary_key = false;
+            while let Some(token) = &parser.current_token {
+                if let TokenType::IDENTIFIER(constraint) = &token.token_type {
+                    let constraint_str = constraint.clone();
+                    if constraint_str.eq_ignore_ascii_case("NOT") {
+                        parser.next_token();
+                        if let Some(next_token) = &parser.current_token {
+                            if let TokenType::IDENTIFIER(null_keyword) = &next_token.token_type {
+                                if null_keyword.eq_ignore_ascii_case("NULL") {
+                                    parser.next_token();
+                                    nullable = false;
+                                    continue;
+                                }
+                            }
+                        }
+                        return Err(ParseError::InvalidSyntax("Expected NULL after NOT".to_string()));
+                    } else if constraint_str.eq_ignore_ascii_case("PRIMARY") {
+                        parser.next_token();
+                        if let Some(next_token) = &parser.current_token {
+                            if let TokenType::IDENTIFIER(key_keyword) = &next_token.token_type {
+                                if key_keyword.eq_ignore_ascii_case("KEY") {
+                                    parser.next_token();
+                                    primary_key = true;
+                                    nullable = false;
+                                    continue;
+                                }
+                            }
+                        }
+                        return Err(ParseError::InvalidSyntax("Expected KEY after PRIMARY".to_string()));
+                    }
+                }
+                break;
+            }
+            ColumnDef { name, data_type, nullable, primary_key }
+        };
+        // Optional semicolon
+        if parser.current_token_is(TokenType::SEMICOLON) { parser.next_token(); }
+        Ok(Statement::Alter(AlterTableStatement {
+            table_name,
+            operation: AlterTableOperation::AddColumn(col_def),
+        }))
+    } else if parser.current_token_is(TokenType::DROP) {
+        parser.next_token(); // Consume DROP
+        parser.expect_token(TokenType::COLUMN)?;
+        let col_name = parser.parse_identifier()?;
+        if parser.current_token_is(TokenType::SEMICOLON) { parser.next_token(); }
+        Ok(Statement::Alter(AlterTableStatement {
+            table_name,
+            operation: AlterTableOperation::DropColumn(col_name),
+        }))
+    } else if parser.current_token_is(TokenType::RENAME) {
+        parser.next_token(); // Consume RENAME
+        parser.expect_token(TokenType::COLUMN)?;
+        let old_name = parser.parse_identifier()?;
+        parser.expect_token(TokenType::TO)?;
+        let new_name = parser.parse_identifier()?;
+        if parser.current_token_is(TokenType::SEMICOLON) { parser.next_token(); }
+        Ok(Statement::Alter(AlterTableStatement {
+            table_name,
+            operation: AlterTableOperation::RenameColumn { old_name, new_name },
+        }))
+    } else {
+        Err(ParseError::InvalidSyntax("Expected ADD, DROP, or RENAME after ALTER TABLE <table>".to_string()))
+    }
 }
 
 /// Parse column definitions for CREATE TABLE
@@ -372,5 +451,59 @@ mod tests {
         let dt_float_result = parse_data_type(&mut parser_float_literal);
         assert!(dt_float_result.is_ok());
         assert_eq!(dt_float_result.unwrap(), DataType::Float);
+    }
+
+    #[test]
+    fn test_parse_alter_table_add_column() {
+        let mut parser = Parser::new("ALTER TABLE users ADD COLUMN age INTEGER NOT NULL;");
+        let stmt = parse_alter(&mut parser).unwrap();
+        if let Statement::Alter(alter_stmt) = stmt {
+            assert_eq!(alter_stmt.table_name, "users");
+            match alter_stmt.operation {
+                AlterTableOperation::AddColumn(ref col) => {
+                    assert_eq!(col.name, "age");
+                    assert_eq!(col.data_type, DataType::Integer);
+                    assert_eq!(col.nullable, false);
+                },
+                _ => panic!("Expected AddColumn operation"),
+            }
+        } else {
+            panic!("Expected ALTER TABLE statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_table_drop_column() {
+        let mut parser = Parser::new("ALTER TABLE users DROP COLUMN age;");
+        let stmt = parse_alter(&mut parser).unwrap();
+        if let Statement::Alter(alter_stmt) = stmt {
+            assert_eq!(alter_stmt.table_name, "users");
+            match alter_stmt.operation {
+                AlterTableOperation::DropColumn(ref col_name) => {
+                    assert_eq!(col_name, "age");
+                },
+                _ => panic!("Expected DropColumn operation"),
+            }
+        } else {
+            panic!("Expected ALTER TABLE statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_table_rename_column() {
+        let mut parser = Parser::new("ALTER TABLE users RENAME COLUMN old_name TO new_name;");
+        let stmt = parse_alter(&mut parser).unwrap();
+        if let Statement::Alter(alter_stmt) = stmt {
+            assert_eq!(alter_stmt.table_name, "users");
+            match alter_stmt.operation {
+                AlterTableOperation::RenameColumn { ref old_name, ref new_name } => {
+                    assert_eq!(old_name, "old_name");
+                    assert_eq!(new_name, "new_name");
+                },
+                _ => panic!("Expected RenameColumn operation"),
+            }
+        } else {
+            panic!("Expected ALTER TABLE statement");
+        }
     }
 } 

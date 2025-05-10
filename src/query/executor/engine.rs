@@ -89,6 +89,49 @@ impl ExecutionEngine {
             Statement::Update(update) => self.execute_update(update),
             Statement::Delete(delete) => self.execute_delete(delete),
             Statement::Create(create) => self.execute_create(create),
+            Statement::Alter(alter_stmt) => {
+                use crate::catalog::Catalog;
+                let catalog = Catalog::instance();
+                let cat = catalog.read().unwrap();
+                let table_name = &alter_stmt.table_name;
+                match &alter_stmt.operation {
+                    crate::query::parser::ast::AlterTableOperation::AddColumn(col_def) => {
+                        let column = crate::catalog::column::Column::from_column_def(col_def)
+                            .map_err(QueryError::ExecutionError)?;
+                        drop(cat); // Release read lock
+                        let catalog = Catalog::instance();
+                        catalog.write().unwrap().alter_table_add_column(table_name, column)
+                            .map_err(QueryError::ExecutionError)?;
+                        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
+                        let mut row = Row::new();
+                        row.set("status".to_string(), DataValue::Text("Column added".to_string()));
+                        result_set.add_row(row);
+                        Ok(result_set)
+                    }
+                    crate::query::parser::ast::AlterTableOperation::DropColumn(col_name) => {
+                        drop(cat);
+                        let catalog = Catalog::instance();
+                        catalog.write().unwrap().alter_table_drop_column(table_name, col_name)
+                            .map_err(QueryError::ExecutionError)?;
+                        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
+                        let mut row = Row::new();
+                        row.set("status".to_string(), DataValue::Text("Column dropped".to_string()));
+                        result_set.add_row(row);
+                        Ok(result_set)
+                    }
+                    crate::query::parser::ast::AlterTableOperation::RenameColumn { old_name, new_name } => {
+                        drop(cat);
+                        let catalog = Catalog::instance();
+                        catalog.write().unwrap().alter_table_rename_column(table_name, old_name, new_name)
+                            .map_err(QueryError::ExecutionError)?;
+                        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
+                        let mut row = Row::new();
+                        row.set("status".to_string(), DataValue::Text("Column renamed".to_string()));
+                        result_set.add_row(row);
+                        Ok(result_set)
+                    }
+                }
+            }
         }
     }
     
@@ -1290,5 +1333,141 @@ mod tests {
             }
             other_err => panic!("Expected ExecutionError with InsufficientSpace, got {:?}", other_err),
         }
+    }
+
+    #[test]
+    fn test_alter_table_add_column_execution() {
+        let columns = vec![
+            CatalogColumn::new("id".to_string(), crate::catalog::schema::DataType::Integer, false, true, None),
+        ];
+        let (engine, _db_file, _log_manager) = setup_engine_with_tables(vec![("users", columns)]);
+
+        // Add a column
+        let alter_sql = "ALTER TABLE users ADD COLUMN name TEXT NOT NULL";
+        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE ADD COLUMN");
+        let result = match parsed_stmt {
+            Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
+            _ => panic!("Expected AlterStatement from parser"),
+        };
+        assert!(result.is_ok(), "ALTER TABLE ADD COLUMN failed: {:?}", result.err());
+        let catalog_guard = engine.catalog.read().unwrap();
+        let table_def = catalog_guard.get_table("users").unwrap();
+        assert!(table_def.has_column("name"), "Column 'name' not found after ALTER TABLE ADD COLUMN");
+        let name_col = table_def.get_column("name").unwrap();
+        assert_eq!(name_col.data_type(), &crate::catalog::schema::DataType::Text);
+        assert!(!name_col.is_nullable(), "Column 'name' should be NOT NULL");
+    }
+
+    #[test]
+    fn test_alter_table_drop_column_execution() {
+        let columns = vec![
+            CatalogColumn::new("id".to_string(), crate::catalog::schema::DataType::Integer, false, true, None),
+            CatalogColumn::new("name".to_string(), crate::catalog::schema::DataType::Text, false, false, None),
+        ];
+        let (engine, _db_file, _log_manager) = setup_engine_with_tables(vec![("users", columns)]);
+
+        // Drop a column
+        let alter_sql = "ALTER TABLE users DROP COLUMN name";
+        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE DROP COLUMN");
+        let result = match parsed_stmt {
+            Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
+            _ => panic!("Expected AlterStatement from parser"),
+        };
+        assert!(result.is_ok(), "ALTER TABLE DROP COLUMN failed: {:?}", result.err());
+        let catalog_guard = engine.catalog.read().unwrap();
+        let table_def = catalog_guard.get_table("users").unwrap();
+        assert!(!table_def.has_column("name"), "Column 'name' should not exist after DROP COLUMN");
+        assert!(table_def.has_column("id"), "Column 'id' should still exist after DROP COLUMN");
+    }
+
+    #[test]
+    fn test_alter_table_rename_column_execution() {
+        let columns = vec![
+            CatalogColumn::new("id".to_string(), crate::catalog::schema::DataType::Integer, false, true, None),
+            CatalogColumn::new("username".to_string(), crate::catalog::schema::DataType::Text, false, false, None),
+        ];
+        let (engine, _db_file, _log_manager) = setup_engine_with_tables(vec![("users", columns)]);
+
+        // Rename a column
+        let alter_sql = "ALTER TABLE users RENAME COLUMN username TO name";
+        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE RENAME COLUMN");
+        let result = match parsed_stmt {
+            Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
+            _ => panic!("Expected AlterStatement from parser"),
+        };
+        assert!(result.is_ok(), "ALTER TABLE RENAME COLUMN failed: {:?}", result.err());
+        let catalog_guard = engine.catalog.read().unwrap();
+        let table_def = catalog_guard.get_table("users").unwrap();
+        assert!(!table_def.has_column("username"), "Old column name should not exist after rename");
+        assert!(table_def.has_column("name"), "New column name should exist after rename");
+        let name_col = table_def.get_column("name").unwrap();
+        assert_eq!(name_col.data_type(), &crate::catalog::schema::DataType::Text);
+    }
+
+    #[test]
+    fn test_alter_table_data_migration() {
+        use crate::query::parser::ast::Statement;
+        // 1. Create table and insert data
+        let columns = vec![
+            CatalogColumn::new("id".to_string(), crate::catalog::schema::DataType::Integer, false, true, None),
+            CatalogColumn::new("name".to_string(), crate::catalog::schema::DataType::Text, false, false, None),
+        ];
+        let (engine, _db_file, _log_manager) = setup_engine_with_tables(vec![("users", columns)]);
+
+        // Insert a row
+        let insert_sql = "INSERT INTO users (id, name) VALUES (1, 'Alice')";
+        let parsed_stmt = parse(insert_sql).expect("Failed to parse insert");
+        let result = match parsed_stmt {
+            Statement::Insert(insert_stmt) => engine.execute(Statement::Insert(insert_stmt)),
+            _ => panic!("Expected InsertStatement from parser"),
+        };
+        assert!(result.is_ok(), "Insert failed: {:?}", result.err());
+
+        // 2. Add a column
+        let alter_sql = "ALTER TABLE users ADD COLUMN age INTEGER";
+        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE ADD COLUMN");
+        let result = match parsed_stmt {
+            Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
+            _ => panic!("Expected AlterStatement from parser"),
+        };
+        assert!(result.is_ok(), "ALTER TABLE ADD COLUMN failed: {:?}", result.err());
+
+        // 3. Query and check that 'age' is NULL for existing row
+        let select_result = engine.execute_query("SELECT * FROM users").expect("SELECT after ADD COLUMN");
+        assert_eq!(select_result.row_count(), 1);
+        let row = select_result.rows().get(0).unwrap();
+        assert_eq!(row.get("id"), Some(&DataValue::Integer(1)));
+        assert_eq!(row.get("name"), Some(&DataValue::Text("Alice".to_string())));
+        assert_eq!(row.get("age"), Some(&DataValue::Null));
+
+        // 4. Drop the 'name' column
+        let alter_sql = "ALTER TABLE users DROP COLUMN name";
+        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE DROP COLUMN");
+        let result = match parsed_stmt {
+            Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
+            _ => panic!("Expected AlterStatement from parser"),
+        };
+        assert!(result.is_ok(), "ALTER TABLE DROP COLUMN failed: {:?}", result.err());
+        let select_result = engine.execute_query("SELECT * FROM users").expect("SELECT after DROP COLUMN");
+        assert_eq!(select_result.row_count(), 1);
+        let row = select_result.rows().get(0).unwrap();
+        assert_eq!(row.get("id"), Some(&DataValue::Integer(1)));
+        assert_eq!(row.get("age"), Some(&DataValue::Null));
+        assert!(row.get("name").is_none());
+
+        // 5. Rename 'age' to 'years'
+        let alter_sql = "ALTER TABLE users RENAME COLUMN age TO years";
+        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE RENAME COLUMN");
+        let result = match parsed_stmt {
+            Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
+            _ => panic!("Expected AlterStatement from parser"),
+        };
+        assert!(result.is_ok(), "ALTER TABLE RENAME COLUMN failed: {:?}", result.err());
+        let select_result = engine.execute_query("SELECT * FROM users").expect("SELECT after RENAME COLUMN");
+        assert_eq!(select_result.row_count(), 1);
+        let row = select_result.rows().get(0).unwrap();
+        assert_eq!(row.get("id"), Some(&DataValue::Integer(1)));
+        assert_eq!(row.get("years"), Some(&DataValue::Null));
+        assert!(row.get("age").is_none());
     }
 } 

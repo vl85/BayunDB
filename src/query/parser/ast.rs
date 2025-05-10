@@ -12,6 +12,7 @@ pub enum Statement {
     Update(UpdateStatement),
     Delete(DeleteStatement),
     Create(CreateStatement),
+    Alter(AlterTableStatement),
 }
 
 /// SELECT statement representation
@@ -253,6 +254,19 @@ pub enum DataType {
     Timestamp,
 }
 
+impl fmt::Display for DataType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DataType::Integer => write!(f, "INTEGER"),
+            DataType::Float => write!(f, "FLOAT"),
+            DataType::Text => write!(f, "TEXT"),
+            DataType::Boolean => write!(f, "BOOLEAN"),
+            DataType::Date => write!(f, "DATE"),
+            DataType::Timestamp => write!(f, "TIMESTAMP"),
+        }
+    }
+}
+
 /// INSERT statement
 #[derive(Debug, Clone)]
 pub struct InsertStatement {
@@ -283,6 +297,22 @@ pub struct DeleteStatement {
     pub where_clause: Option<Box<Expression>>,
 }
 
+/// ALTER TABLE statement
+#[derive(Debug, Clone)]
+pub struct AlterTableStatement {
+    pub table_name: String,
+    pub operation: AlterTableOperation,
+}
+
+/// Supported ALTER TABLE operations
+#[derive(Debug, Clone)]
+pub enum AlterTableOperation {
+    AddColumn(ColumnDef),
+    DropColumn(String),
+    RenameColumn { old_name: String, new_name: String },
+    // Extend with more operations as needed
+}
+
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -291,6 +321,7 @@ impl fmt::Display for Statement {
             Statement::Update(_) => write!(f, "UPDATE statement"),
             Statement::Delete(_) => write!(f, "DELETE statement"),
             Statement::Create(_) => write!(f, "CREATE statement"),
+            Statement::Alter(_) => write!(f, "ALTER TABLE statement"),
         }
     }
 }
@@ -315,6 +346,24 @@ impl fmt::Display for AggregateFunction {
             AggregateFunction::Avg => write!(f, "AVG"),
             AggregateFunction::Min => write!(f, "MIN"),
             AggregateFunction::Max => write!(f, "MAX"),
+        }
+    }
+}
+
+impl fmt::Display for AlterTableStatement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ALTER TABLE {} {}", self.table_name, self.operation)
+    }
+}
+
+impl fmt::Display for AlterTableOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AlterTableOperation::AddColumn(col) => write!(f, "ADD COLUMN {} {}{}{}", col.name, col.data_type,
+                if !col.nullable { " NOT NULL" } else { "" },
+                if col.primary_key { " PRIMARY KEY" } else { "" }),
+            AlterTableOperation::DropColumn(name) => write!(f, "DROP COLUMN {}", name),
+            AlterTableOperation::RenameColumn { old_name, new_name } => write!(f, "RENAME COLUMN {} TO {}", old_name, new_name),
         }
     }
 }
