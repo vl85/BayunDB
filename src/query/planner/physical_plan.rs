@@ -214,7 +214,7 @@ pub fn expression_to_predicate(expr: &Expression) -> String {
 mod tests {
     use super::*;
     use crate::query::parser::ast::{
-        ColumnReference, Operator as AstOperator, Value, AggregateFunction,
+        ColumnReference, Operator as AstOperator, Value, AggregateFunction, DataType, ColumnDef
     };
 
     // Test for each PhysicalPlan variant's display implementation

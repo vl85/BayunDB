@@ -6,6 +6,7 @@ use crate::query::planner::logical::LogicalPlan;
 use crate::query::planner::physical_plan::PhysicalPlan;
 use crate::query::parser::ast::Operator as AstOperator;
 use crate::query::parser::ast::Expression;
+use crate::query::parser::ast::DataType;
 
 // Helper to check if the join condition is a simple equality
 fn is_equi_join_condition(condition: &Expression) -> bool {
@@ -78,7 +79,7 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::parser::ast::{Expression, ColumnReference, Operator, Value, JoinType, AggregateFunction, ColumnDef};
+    use crate::query::parser::ast::{Expression, ColumnReference, Operator, Value, JoinType, AggregateFunction, ColumnDef, DataType};
     
     #[test]
     fn test_simple_physical_plan() {

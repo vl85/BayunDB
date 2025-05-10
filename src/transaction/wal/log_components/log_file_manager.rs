@@ -6,8 +6,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use log::error;
 use thiserror::Error;
-
 use crate::transaction::wal::log_components::log_manager_core::LogManagerConfig;
 
 /// Error type for log file operations
@@ -470,7 +470,9 @@ impl LogFileManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+    use crate::transaction::wal::log_record::{LogRecord, LogRecordError};
+    use crate::transaction::wal::log_buffer::LogBufferConfig;
+
     fn create_test_config() -> (TempDir, LogManagerConfig) {
         let temp_dir = TempDir::new().unwrap();
         let config = LogManagerConfig {
@@ -520,7 +522,7 @@ mod tests {
             log_dir: temp_dir.path().to_path_buf(),
             log_file_base_name: "test_rotation".to_string(),
             max_log_file_size: 100, // Just 100 bytes for quick rotation
-            buffer_config: LogBufferConfig::default(),
+            buffer_config: crate::transaction::wal::log_buffer::LogBufferConfig::default(),
             force_sync: true,
         };
         

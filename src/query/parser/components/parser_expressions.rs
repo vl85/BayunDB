@@ -13,11 +13,19 @@ pub fn parse_expression(parser: &mut Parser, precedence: u8) -> ParseResult<Expr
     
     // Then handle infix expressions based on precedence
     while let Some(token) = &parser.current_token {
-        let current_precedence = get_operator_precedence(&token.token_type);
-        if precedence >= current_precedence {
+        // Check if the current token can be an infix operator
+        // We get precedence based on TokenType directly as per parser_core.rs definition
+        let current_precedence = get_operator_precedence(&token.token_type); 
+
+        // If the token is not an operator or its precedence is too low, stop.
+        // A precedence of 0 typically means it's not an operator we handle here.
+        if current_precedence == 0 || precedence >= current_precedence {
             break;
         }
         
+        // If we are here, it means current_token is an operator 
+        // whose precedence allows it to be processed.
+        // parse_infix_expression will handle the specific operator logic.
         left_expr = parse_infix_expression(parser, left_expr)?;
     }
     
@@ -67,16 +75,21 @@ fn parse_prefix_expression(parser: &mut Parser) -> ParseResult<Expression> {
 fn parse_infix_expression(parser: &mut Parser, left: Expression) -> ParseResult<Expression> {
     match &parser.current_token {
         Some(token) => {
-            let token_type = token.token_type.clone();
-            let precedence = get_operator_precedence(&token_type);
-            let op = token_to_operator(&token_type)?;
-            parser.next_token();
+            // Get precedence from TokenType for the current operator
+            let op_token_type = token.token_type.clone();
+            let op_precedence = get_operator_precedence(&op_token_type);
+
+            // Convert TokenType to the ast::Operator enum for the expression node
+            let ast_op = token_to_operator(&op_token_type)?;
             
-            let right = parse_expression(parser, precedence)?;
+            parser.next_token(); // Consume the operator token
+            
+            // Parse the right-hand side with the current operator's precedence
+            let right = parse_expression(parser, op_precedence)?;
             
             Ok(Expression::BinaryOp {
                 left: Box::new(left),
-                op,
+                op: ast_op, // Use the converted ast::Operator here
                 right: Box::new(right),
             })
         }
@@ -157,33 +170,14 @@ fn parse_aggregate_function(parser: &mut Parser, token_type: TokenType) -> Parse
     Ok(Expression::Aggregate { function, arg })
 }
 
-/// Parse a function call
+/* // Commenting out unused function
 fn parse_function_call(parser: &mut Parser, function_name: String) -> ParseResult<Expression> {
-    // Expect opening parenthesis
-    parser.expect_token(TokenType::LeftParen)?;
-    
-    let mut args = Vec::new();
-    
-    // Handle empty arguments case
-    if !parser.current_token_is(TokenType::RightParen) {
-        // Parse first argument
-        args.push(parse_expression(parser, 0)?);
-        
-        // Parse additional arguments separated by commas
-        while parser.current_token_is(TokenType::COMMA) {
-            parser.next_token(); // Consume comma
-            args.push(parse_expression(parser, 0)?);
-        }
-    }
-    
-    // Expect closing parenthesis
-    parser.expect_token(TokenType::RightParen)?;
-    
-    Ok(Expression::Function {
-        name: function_name,
-        args,
-    })
+    // Implementation for parsing function calls, e.g., COUNT(*), SUBSTRING(col, 1, 3)
+    // This would involve parsing arguments within parentheses
+    // For now, return a placeholder or error
+    Err(ParseError::NotYetImplemented("Function call parsing".to_string()))
 }
+*/
 
 #[cfg(test)]
 mod tests {

@@ -318,7 +318,7 @@ impl Operator for DummyOperator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::parser::ast::{ColumnReference, Operator as AstOperator};
+    use crate::query::parser::ast::{ColumnReference, Operator as AstOperator, Value};
     
     #[test]
     fn test_filter_operation() {
