@@ -17,7 +17,7 @@ pub struct Column {
     /// Whether this column is part of the primary key
     primary_key: bool,
     /// Default value (if any)
-    default_value: Option<String>,
+    default_value: Option<String>, // Will store as SQL string for now
 }
 
 impl Column {
@@ -75,7 +75,7 @@ impl Column {
     }
     
     /// Create a column from a column definition
-    pub fn from_column_def(col_def: &crate::query::parser::ast::ColumnDef) -> Result<Self, String> {
+    pub(crate) fn from_column_def(col_def: &crate::query::parser::ast::ColumnDef) -> Result<Self, String> {
         // Convert AST DataType to catalog DataType
         let data_type = match col_def.data_type {
             crate::query::parser::ast::DataType::Integer => DataType::Integer,
@@ -85,18 +85,18 @@ impl Column {
             crate::query::parser::ast::DataType::Date => DataType::Date,
             crate::query::parser::ast::DataType::Timestamp => DataType::Timestamp,
         };
-        
+        let default_value = col_def.default_value.as_ref().map(|expr| format!("{}", expr));
         Ok(Column {
             name: col_def.name.clone(),
             data_type,
             nullable: col_def.nullable,
             primary_key: col_def.primary_key,
-            default_value: None,  // We don't have default values in our AST yet
+            default_value,
         })
     }
 
     /// Rename the column
-    pub fn rename(&mut self, new_name: &str) {
+    pub(crate) fn rename(&mut self, new_name: &str) {
         self.name = new_name.to_string();
     }
 } 

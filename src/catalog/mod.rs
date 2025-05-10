@@ -1,7 +1,6 @@
-// Catalog Management Module
-//
-// This module is responsible for managing the database schema metadata,
-// including tables, columns, indexes, and other database objects.
+//! Catalog Management Module
+//!
+//! This module manages the database schema metadata, including tables, columns, indexes, and other database objects.
 
 pub mod schema;
 pub mod table;
@@ -69,18 +68,21 @@ impl Catalog {
     }
     
     /// Get a reference to a schema by name
-    pub fn get_schema(&self, name: &str) -> Option<Schema> {
+    #[allow(dead_code)]
+    pub(crate) fn get_schema(&self, name: &str) -> Option<Schema> {
         self.schemas.read().unwrap().get(name).cloned()
     }
     
     /// Get the current schema
-    pub fn current_schema(&self) -> Schema {
+    #[allow(dead_code)]
+    pub(crate) fn current_schema(&self) -> Schema {
         let current_name = self.current_schema.read().unwrap().clone();
         self.get_schema(&current_name).unwrap()
     }
     
     /// Create a new schema
-    pub fn create_schema(&self, name: String) -> Result<(), String> {
+    #[allow(dead_code)]
+    pub(crate) fn create_schema(&self, name: String) -> Result<(), String> {
         let mut schemas = self.schemas.write().unwrap();
         if schemas.contains_key(&name) {
             return Err(format!("Schema {} already exists", name));
@@ -92,7 +94,8 @@ impl Catalog {
     }
     
     /// Set the current schema
-    pub fn set_current_schema(&self, name: String) -> Result<(), String> {
+    #[allow(dead_code)]
+    pub(crate) fn set_current_schema(&self, name: String) -> Result<(), String> {
         let schemas = self.schemas.read().unwrap();
         if !schemas.contains_key(&name) {
             return Err(format!("Schema {} does not exist", name));
@@ -143,7 +146,7 @@ impl Catalog {
 
     /// Get a mutable reference to a table in the current schema.
     /// This requires the caller to have a mutable reference to the Catalog.
-    pub fn get_table_mut_from_current_schema(&mut self, table_name: &str) -> Option<&mut Table> {
+    pub(crate) fn get_table_mut_from_current_schema(&mut self, table_name: &str) -> Option<&mut Table> {
         // Read the current schema name. This requires a read lock on current_schema.
         // This is safe because &mut self ensures no other &mut self or &self methods are running.
         let schema_name = self.current_schema.read().unwrap().clone();
@@ -157,7 +160,8 @@ impl Catalog {
 
     /// Drop a table from the current schema.
     /// This requires the caller to have a mutable reference to the Catalog.
-    pub fn drop_table_from_current_schema(&mut self, table_name: &str) -> Result<(), String> {
+    #[allow(dead_code)]
+    pub(crate) fn drop_table_from_current_schema(&mut self, table_name: &str) -> Result<(), String> {
         let schema_name = self.current_schema.read().unwrap().clone();
         match self.schemas.get_mut().unwrap().get_mut(&schema_name) {
             Some(schema) => schema.drop_table(table_name),

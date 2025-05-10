@@ -74,6 +74,7 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             // Parse optional constraints (reuse logic from parse_column_definitions)
             let mut nullable = true;
             let mut primary_key = false;
+            let mut default_value = None;
             while let Some(token) = &parser.current_token {
                 if let TokenType::IDENTIFIER(constraint) = &token.token_type {
                     let constraint_str = constraint.clone();
@@ -102,11 +103,16 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                             }
                         }
                         return Err(ParseError::InvalidSyntax("Expected KEY after PRIMARY".to_string()));
+                    } else if constraint_str.eq_ignore_ascii_case("DEFAULT") {
+                        parser.next_token();
+                        let expr = super::parser_expressions::parse_expression(parser, 0)?;
+                        default_value = Some(expr);
+                        continue;
                     }
                 }
                 break;
             }
-            ColumnDef { name, data_type, nullable, primary_key }
+            ColumnDef { name, data_type, nullable, primary_key, default_value }
         };
         // Optional semicolon
         if parser.current_token_is(TokenType::SEMICOLON) { parser.next_token(); }
@@ -153,6 +159,7 @@ fn parse_column_definitions(parser: &mut Parser) -> ParseResult<Vec<ColumnDef>> 
         // Parse optional constraints
         let mut nullable = true;
         let mut primary_key = false;
+        let mut default_value = None;
         
         while let Some(token) = &parser.current_token {
             if let TokenType::IDENTIFIER(constraint) = &token.token_type {
@@ -186,6 +193,11 @@ fn parse_column_definitions(parser: &mut Parser) -> ParseResult<Vec<ColumnDef>> 
                         }
                     }
                     return Err(ParseError::InvalidSyntax("Expected KEY after PRIMARY".to_string()));
+                } else if constraint_str.eq_ignore_ascii_case("DEFAULT") {
+                    parser.next_token();
+                    let expr = super::parser_expressions::parse_expression(parser, 0)?;
+                    default_value = Some(expr);
+                    continue;
                 }
             }
             break; // Not a constraint, so we're done
@@ -196,6 +208,7 @@ fn parse_column_definitions(parser: &mut Parser) -> ParseResult<Vec<ColumnDef>> 
             data_type,
             nullable,
             primary_key,
+            default_value,
         });
         
         // Check if we have a comma for more columns
@@ -501,6 +514,26 @@ mod tests {
                     assert_eq!(new_name, "new_name");
                 },
                 _ => panic!("Expected RenameColumn operation"),
+            }
+        } else {
+            panic!("Expected ALTER TABLE statement");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_table_add_column_with_default() {
+        let mut parser = Parser::new("ALTER TABLE users ADD COLUMN age INTEGER DEFAULT 42;");
+        let stmt = parse_alter(&mut parser).unwrap();
+        if let Statement::Alter(alter_stmt) = stmt {
+            assert_eq!(alter_stmt.table_name, "users");
+            match alter_stmt.operation {
+                AlterTableOperation::AddColumn(ref col) => {
+                    assert_eq!(col.name, "age");
+                    assert_eq!(col.data_type, DataType::Integer);
+                    assert_eq!(col.nullable, true);
+                    assert!(col.default_value.is_some());
+                },
+                _ => panic!("Expected AddColumn operation"),
             }
         } else {
             panic!("Expected ALTER TABLE statement");

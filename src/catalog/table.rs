@@ -1,6 +1,6 @@
-// Table Management Module
-//
-// This module defines the Table type that represents a database table schema.
+//! Table Management Module
+//!
+//! This module defines the Table type that represents a database table schema.
 
 use std::collections::HashMap;
 use super::column::Column;
@@ -100,21 +100,18 @@ impl Table {
     }
     
     /// Add a column to the table
-    pub fn add_column(&mut self, column: Column) -> Result<(), String> {
+    pub(crate) fn add_column(&mut self, column: Column) -> Result<(), String> {
         let col_name = column.name().to_string();
-        
         if self.has_column(&col_name) {
             return Err(format!("Column {} already exists in table {}", col_name, self.name));
         }
-        
         let idx = self.columns.len();
         self.columns.push(column);
         self.column_map.insert(col_name, idx);
-        
         if self.columns[idx].is_primary_key() {
             self.primary_key_columns.push(idx);
         }
-        
+        // TODO: Data migration - update all existing rows to have the default value for this column if present
         Ok(())
     }
     
@@ -148,7 +145,7 @@ impl Table {
     }
     
     /// Drop a column from the table
-    pub fn drop_column(&mut self, column_name: &str) -> Result<(), String> {
+    pub(crate) fn drop_column(&mut self, column_name: &str) -> Result<(), String> {
         if !self.has_column(column_name) {
             return Err(format!("Column {} does not exist in table {}", column_name, self.name));
         }
@@ -168,7 +165,7 @@ impl Table {
     }
 
     /// Rename a column in the table
-    pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+    pub(crate) fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
         if !self.has_column(old_name) {
             return Err(format!("Column {} does not exist in table {}", old_name, self.name));
         }

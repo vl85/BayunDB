@@ -13,6 +13,7 @@ use crate::transaction::wal::log_manager::LogManager;
 
 const INVALID_PAGE_ID: PageId = 0;
 
+#[allow(dead_code)]
 pub struct BufferPoolManager {
     pool_size: usize,
     frames: Vec<FramePtr>,

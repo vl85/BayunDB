@@ -3,13 +3,16 @@
 // This module defines the logical plan representation for query processing.
 
 use std::fmt;
-
-use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, ColumnDef};
-use crate::query::parser::ast::AggregateFunction;
-use crate::catalog::{Catalog, Table as CatalogTable, Column as CatalogColumn, DataType as CatalogDataType};
+// use std::sync::Arc; // Unused import as per cargo build
+// use crate::catalog::Schema; // Unused import as per cargo build
+// crate::common::types::DataType was an erroneous addition and is ensured to be removed.
+use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, ColumnDef, AggregateFunction}; // AggregateFunction is used, despite cargo warning
+// Statement is reported as unused by cargo build.
+// use crate::query::parser::ast::Statement;
+// use crate::query::parser::ast::AggregateFunction; // This was part of a combined import, now handled by commenting its usage in the line above.
 
 /// Represents a node in the logical query plan
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LogicalPlan {
     /// Scan a table
     Scan {

@@ -1,3 +1,7 @@
+//! BayunDB - Modular Embedded Database Engine
+//!
+//! This crate provides a modular, embeddable SQL database engine.
+
 #![allow(unused_variables)]
 
 // Bayun Database Engine

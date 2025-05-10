@@ -80,7 +80,7 @@ pub struct Schema {
 
 impl Schema {
     /// Create a new, empty schema
-    pub fn new(name: String) -> Self {
+    pub(crate) fn new(name: String) -> Self {
         Schema {
             name,
             tables: HashMap::new(),
@@ -93,7 +93,7 @@ impl Schema {
     }
     
     /// Add a table to the schema
-    pub fn add_table(&mut self, table: Table) -> Result<(), String> {
+    pub(crate) fn add_table(&mut self, table: Table) -> Result<(), String> {
         let table_name = table.name().to_string();
         
         if self.tables.contains_key(&table_name) {
@@ -114,7 +114,7 @@ impl Schema {
         self.tables.get(table_name).cloned()
     }
 
-    pub fn get_table_mut(&mut self, table_name: &str) -> Option<&mut Table> {
+    pub(crate) fn get_table_mut(&mut self, table_name: &str) -> Option<&mut Table> {
         self.tables.get_mut(table_name)
     }
     
@@ -123,13 +123,12 @@ impl Schema {
         self.tables.values().cloned().collect()
     }
     
-    /// Remove a table from the schema
-    pub fn drop_table(&mut self, table_name: &str) -> Result<(), String> {
-        if !self.tables.contains_key(table_name) {
-            return Err(format!("Table {} does not exist in schema {}", table_name, self.name));
+    /// Drop a table from the schema
+    #[allow(dead_code)]
+    pub(crate) fn drop_table(&mut self, table_name: &str) -> Result<(), String> {
+        if self.tables.contains_key(table_name) {
+            self.tables.remove(table_name);
         }
-        
-        self.tables.remove(table_name);
         Ok(())
     }
 } 

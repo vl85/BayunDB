@@ -90,18 +90,92 @@ impl ExecutionEngine {
             Statement::Delete(delete) => self.execute_delete(delete),
             Statement::Create(create) => self.execute_create(create),
             Statement::Alter(alter_stmt) => {
-                use crate::catalog::Catalog;
-                let catalog = Catalog::instance();
-                let cat = catalog.read().unwrap();
+                // Block DDL if there are any active transactions
+                if !self.transaction_manager.get_active_transaction_ids().is_empty() {
+                    return Err(QueryError::ExecutionError("DDL operations are blocked until all transactions complete (no active transactions allowed during schema changes)".to_string()));
+                }
                 let table_name = &alter_stmt.table_name;
                 match &alter_stmt.operation {
                     crate::query::parser::ast::AlterTableOperation::AddColumn(col_def) => {
                         let column = crate::catalog::column::Column::from_column_def(col_def)
-                            .map_err(QueryError::ExecutionError)?;
-                        drop(cat); // Release read lock
-                        let catalog = Catalog::instance();
-                        catalog.write().unwrap().alter_table_add_column(table_name, column)
-                            .map_err(QueryError::ExecutionError)?;
+                            .map_err(|e| QueryError::ExecutionError(format!("Failed to define column for ADD COLUMN: {}", e)))?;
+                        let catalog = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
+                        catalog.alter_table_add_column(table_name, column.clone())
+                            .map_err(|e| QueryError::ExecutionError(format!("Failed to add column: {}", e)))?;
+                        // Data migration: set default value for all existing rows if present
+                        let table_schema = catalog.get_table(table_name)
+                            .ok_or_else(|| QueryError::TableNotFound(table_name.clone()))?;
+                        let first_page_id = table_schema.first_page_id();
+                        if let Some(first_page_id) = first_page_id {
+                            let mut current_page_id = Some(first_page_id);
+                            while let Some(page_id_val) = current_page_id {
+                                let page_rc = self.buffer_pool.fetch_page(page_id_val)
+                                    .map_err(|e| QueryError::StorageError(format!("Failed to fetch page {} for data migration: {}", page_id_val, e)))?;
+                                let record_rids_on_page: Vec<Rid> = {
+                                    let page_read_guard = page_rc.read();
+                                    let num_records_on_page = self.page_manager.get_record_count(&page_read_guard)
+                                        .map_err(|e| QueryError::StorageError(format!("Failed to get record count for page {}: {}", page_id_val, e)))?;
+                                    (0..num_records_on_page).map(|slot_num| Rid::new(page_id_val, slot_num)).collect()
+                                };
+                                self.buffer_pool.unpin_page(page_id_val, false).map_err(|e| QueryError::StorageError(format!("Failed to unpin page {} after reading RIDs: {}", page_id_val, e)))?;
+                                for rid in record_rids_on_page {
+                                    let page_rc = self.buffer_pool.fetch_page(rid.page_id)
+                                        .map_err(|e| QueryError::StorageError(format!("Failed to fetch page {} for row update: {}", rid.page_id, e)))?;
+                                    let (old_record_data_bytes, mut values): (Vec<u8>, Vec<DataValue>) = {
+                                        let page_read_guard = page_rc.read();
+                                        let record_data_bytes = self.page_manager.get_record(&page_read_guard, rid)
+                                            .map_err(|e| QueryError::StorageError(format!("Failed to get record bytes for RID {:?}: {}", rid, e)))?;
+                                        if record_data_bytes.is_empty() {
+                                            self.buffer_pool.unpin_page(rid.page_id, false).unwrap_or_default();
+                                            continue;
+                                        }
+                                        let deserialized_values: Vec<DataValue> = bincode::deserialize(&record_data_bytes)
+                                            .map_err(|e| QueryError::ExecutionError(format!("Failed to deserialize row for migration (RID {:?}): {}", rid, e)))?;
+                                        (record_data_bytes, deserialized_values)
+                                    };
+                                    self.buffer_pool.unpin_page(rid.page_id, false).unwrap_or_default();
+                                    // Append default value or NULL
+                                    let new_value;
+                                    if let Some(default_expr) = &col_def.default_value {
+                                        new_value = match default_expr {
+                                            Expression::Literal(val) => {
+                                                self.ast_value_to_data_value(val, Some(column.data_type()))?
+                                            }
+                                            _ => {
+                                                // Non-literal default expressions are not supported for auto-migration.
+                                                // For columns being added, if a default is not a literal,
+                                                // existing rows will get NULL for this new column.
+                                                // This matches behavior of many SQL DBs if default is complex.
+                                                DataValue::Null
+                                            }
+                                        };
+                                    } else {
+                                        new_value = DataValue::Null;
+                                    }
+                                    values.push(new_value);
+                                    let new_record_data_bytes = bincode::serialize(&values)
+                                        .map_err(|e| QueryError::ExecutionError(format!("Failed to serialize migrated row for RID {:?}: {}", rid, e)))?;
+                                    let page_rc = self.buffer_pool.fetch_page(rid.page_id)
+                                        .map_err(|e| QueryError::StorageError(format!("Failed to fetch page {} for final update of RID {:?}: {}", rid.page_id, rid, e)))?;
+                                    {
+                                        let mut page_write_guard = page_rc.write();
+                                        self.page_manager.update_record(&mut page_write_guard, rid, &new_record_data_bytes)
+                                            .map_err(|e| QueryError::StorageError(format!("Failed to update record on page for RID {:?}: {}", rid, e)))?;
+                                    }
+                                    self.buffer_pool.unpin_page(rid.page_id, true).unwrap_or_default();
+                                }
+                                let page_rc_for_next_pid = self.buffer_pool.fetch_page(page_id_val)
+                                    .map_err(|e| QueryError::StorageError(format!("Failed to fetch page {} to get next page ID: {}", page_id_val, e)))?;
+                                {
+                                    let page_read_guard = page_rc_for_next_pid.read();
+                                    current_page_id = self.page_manager.get_next_page_id(&page_read_guard)?;
+                                }
+                                self.buffer_pool.unpin_page(page_id_val, false).unwrap_or_default();
+                                if current_page_id.is_none() {
+                                    break;
+                                }
+                            }
+                        }
                         let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
                         let mut row = Row::new();
                         row.set("status".to_string(), DataValue::Text("Column added".to_string()));
@@ -109,10 +183,9 @@ impl ExecutionEngine {
                         Ok(result_set)
                     }
                     crate::query::parser::ast::AlterTableOperation::DropColumn(col_name) => {
-                        drop(cat);
-                        let catalog = Catalog::instance();
-                        catalog.write().unwrap().alter_table_drop_column(table_name, col_name)
-                            .map_err(QueryError::ExecutionError)?;
+                        let catalog = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
+                        catalog.alter_table_drop_column(table_name, col_name)
+                            .map_err(|e| QueryError::ExecutionError(format!("Failed to drop column: {}", e)))?;
                         let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
                         let mut row = Row::new();
                         row.set("status".to_string(), DataValue::Text("Column dropped".to_string()));
@@ -120,10 +193,9 @@ impl ExecutionEngine {
                         Ok(result_set)
                     }
                     crate::query::parser::ast::AlterTableOperation::RenameColumn { old_name, new_name } => {
-                        drop(cat);
-                        let catalog = Catalog::instance();
-                        catalog.write().unwrap().alter_table_rename_column(table_name, old_name, new_name)
-                            .map_err(QueryError::ExecutionError)?;
+                        let catalog = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
+                        catalog.alter_table_rename_column(table_name, old_name, new_name)
+                            .map_err(|e| QueryError::ExecutionError(format!("Failed to rename column: {}", e)))?;
                         let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
                         let mut row = Row::new();
                         row.set("status".to_string(), DataValue::Text("Column renamed".to_string()));
@@ -887,7 +959,7 @@ impl ExecutionEngine {
                     },
                     crate::query::parser::ast::Value::Float(f) => {
                          match target_ast_type {
-                            Some(crate::query::parser::ast::DataType::Integer) => Ok(DataValue::Integer(*f as i64)),
+                            Some(crate::query::parser::ast::DataType::Integer) => Ok(DataValue::Integer(*f as i64)), // Potential precision loss, consider if this is desired
                             Some(crate::query::parser::ast::DataType::Float) | None => Ok(DataValue::Float(*f)),
                             Some(other_type) => Err(QueryError::ExecutionError(format!("Cannot cast float to {:?}", other_type))),
                         }
@@ -906,10 +978,9 @@ impl ExecutionEngine {
                                 .map(DataValue::Float)
                                 .map_err(|_| QueryError::ExecutionError(format!("Cannot cast string '{}' to Float", s))),
                             Some(crate::query::parser::ast::DataType::Text) | None => Ok(DataValue::Text(s.clone())),
-                            // Ensure Date/Timestamp from AST are handled if they exist in ast::DataType but not DataValue yet
                             Some(crate::query::parser::ast::DataType::Date) => Err(QueryError::ExecutionError("Date type conversion from string not yet implemented".to_string())),
                             Some(crate::query::parser::ast::DataType::Timestamp) => Err(QueryError::ExecutionError("Timestamp type conversion from string not yet implemented".to_string())),
-                            Some(other_type) => Err(QueryError::ExecutionError(format!("Cannot cast string to unknown AST type: {:?}", other_type))),
+                            // The Some(other_type) was here and was deemed unreachable
                         }
                     },
                     crate::query::parser::ast::Value::Boolean(b) => {
@@ -1469,5 +1540,49 @@ mod tests {
         assert_eq!(row.get("id"), Some(&DataValue::Integer(1)));
         assert_eq!(row.get("years"), Some(&DataValue::Null));
         assert!(row.get("age").is_none());
+    }
+
+    #[test]
+    fn test_alter_table_add_column_with_default_data_migration() {
+        use crate::query::parser::ast::Statement;
+        // 1. Create table and insert data
+        let columns = vec![
+            CatalogColumn::new("id".to_string(), crate::catalog::schema::DataType::Integer, false, true, None),
+            CatalogColumn::new("name".to_string(), crate::catalog::schema::DataType::Text, false, false, None),
+        ];
+        let (engine, _db_file, _log_manager) = setup_engine_with_tables(vec![("users", columns)]);
+
+        // Insert two rows
+        let insert_sql1 = "INSERT INTO users (id, name) VALUES (1, 'Alice')";
+        let insert_sql2 = "INSERT INTO users (id, name) VALUES (2, 'Bob')";
+        let parsed_stmt1 = parse(insert_sql1).expect("Failed to parse insert 1");
+        let parsed_stmt2 = parse(insert_sql2).expect("Failed to parse insert 2");
+        let result1 = match parsed_stmt1 {
+            Statement::Insert(insert_stmt) => engine.execute(Statement::Insert(insert_stmt)),
+            _ => panic!("Expected InsertStatement from parser 1"),
+        };
+        let result2 = match parsed_stmt2 {
+            Statement::Insert(insert_stmt) => engine.execute(Statement::Insert(insert_stmt)),
+            _ => panic!("Expected InsertStatement from parser 2"),
+        };
+        assert!(result1.is_ok(), "Insert 1 failed: {:?}", result1.err());
+        assert!(result2.is_ok(), "Insert 2 failed: {:?}", result2.err());
+
+        // 2. Add a column with DEFAULT 42
+        let alter_sql = "ALTER TABLE users ADD COLUMN age INTEGER DEFAULT 42";
+        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE ADD COLUMN with DEFAULT");
+        let result = match parsed_stmt {
+            Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
+            _ => panic!("Expected AlterStatement from parser"),
+        };
+        assert!(result.is_ok(), "ALTER TABLE ADD COLUMN with DEFAULT failed: {:?}", result.err());
+
+        // 3. Query and check that 'age' is 42 for all existing rows
+        let select_result = engine.execute_query("SELECT * FROM users").expect("SELECT after ADD COLUMN with DEFAULT");
+        assert_eq!(select_result.row_count(), 2);
+        for row in select_result.rows() {
+            assert!(row.get("age").is_some(), "Row missing 'age' column");
+            assert_eq!(row.get("age"), Some(&DataValue::Integer(42)), "Row 'age' column is not 42");
+        }
     }
 } 

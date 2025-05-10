@@ -11,10 +11,10 @@ use bayundb::storage::page::PageManager;
 use bayundb::index::btree::BTreeIndex;
 use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
 use bayundb::transaction::wal::log_buffer::LogBufferConfig;
-use bayundb::query::executor::engine::ExecutionEngine;
-use bayundb::query::executor::result::{QueryResult, QueryResultSet, Row, DataValue};
+use bayundb::query::executor::result::{QueryResult, QueryResultSet};
+use bayundb::query::executor::ExecutionEngine;
 use bayundb::catalog::Catalog;
-use bayundb::transaction::concurrency::TransactionManager;
+use bayundb::transaction::concurrency::transaction_manager::TransactionManager;
 
 const HISTORY_FILE: &str = ".bayundb_history";
 
@@ -57,6 +57,7 @@ enum Commands {
 }
 
 /// Database instance with all required components
+#[allow(dead_code)] // This struct holds core DB components, many unused by current simple CLI
 struct Database {
     buffer_pool: Arc<BufferPoolManager>,
     page_manager: PageManager,

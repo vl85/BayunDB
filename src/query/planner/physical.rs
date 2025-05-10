@@ -344,18 +344,21 @@ mod tests {
                 data_type: DataType::Integer,
                 nullable: false,
                 primary_key: true,
+                default_value: None,
             },
             ColumnDef {
                 name: "name".to_string(),
                 data_type: DataType::Text,
                 nullable: true,
                 primary_key: false,
+                default_value: None,
             },
             ColumnDef {
                 name: "email".to_string(),
                 data_type: DataType::Text,
                 nullable: true,
                 primary_key: false,
+                default_value: None,
             },
         ];
         

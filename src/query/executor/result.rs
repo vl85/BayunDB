@@ -324,6 +324,15 @@ impl QueryResultSet {
         
         result
     }
+    
+    /// Return a message for empty result sets
+    pub fn empty_message(&self) -> String {
+        if self.columns.is_empty() {
+            "Empty result".to_string()
+        } else {
+            format!("Empty result set with columns: {}", self.columns.join(", "))
+        }
+    }
 }
 
 #[cfg(test)]

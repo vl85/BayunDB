@@ -47,7 +47,7 @@ pub enum SelectColumn {
 }
 
 /// Column reference (could be qualified with table name)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColumnReference {
     pub table: Option<String>,
     pub name: String,
@@ -97,7 +97,7 @@ pub enum AggregateFunction {
 }
 
 /// Expression in SQL
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     /// Literal value
     Literal(Value),
@@ -156,7 +156,7 @@ impl fmt::Display for Expression {
 }
 
 /// SQL values
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
     Integer(i64),
@@ -235,12 +235,13 @@ pub struct CreateStatement {
 }
 
 /// Column definition for CREATE TABLE
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ColumnDef {
     pub name: String,
     pub data_type: DataType,
     pub nullable: bool,
     pub primary_key: bool,
+    pub default_value: Option<Expression>,
 }
 
 /// SQL data types

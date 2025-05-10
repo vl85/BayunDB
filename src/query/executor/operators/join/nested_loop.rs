@@ -17,8 +17,10 @@ pub struct NestedLoopJoin {
     /// Join condition as a string representation (will be evaluated)
     condition: String,
     /// Alias for the left input
+    #[allow(dead_code)]
     left_alias: String,
     /// Alias for the right input
+    #[allow(dead_code)]
     right_alias: String,
     /// Current left row being processed
     current_left_row: Option<Row>,

@@ -350,6 +350,7 @@ mod tests {
             data_type: DataType::Integer,
             nullable: false,
             primary_key: true,
+            default_value: None,
         };
         
         let column2 = ColumnDef {
@@ -357,6 +358,7 @@ mod tests {
             data_type: DataType::Text,
             nullable: true,
             primary_key: false,
+            default_value: None,
         };
         
         let create_plan = PhysicalPlan::CreateTable {

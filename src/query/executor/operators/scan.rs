@@ -187,18 +187,14 @@ impl TableScanOperator {
                                 .map(|col| self.get_effective_column_name(col.name()))
                                 .collect();
 
-                            if data_values.len() != column_names.len() {
-                                println!(
-                                    "[SCAN GET_NEXT_RECORD] Schema mismatch page {}, rid {:?}. Expected {} cols, got {}. Cols: {:?}", 
-                                    current_page_id_val, rid, column_names.len(), data_values.len(), column_names
-                                );
-                                let _ = self.buffer_pool.unpin_page(current_page_id_val, false);
-                                return Err(QueryError::ExecutionError(format!(
-                                    "Schema mismatch for table '{}': deserialized record has {} values, schema expects {} ({}). Page {}, slot {}.",
-                                    self.table_name, data_values.len(), column_names.len(), column_names.join(", "), current_page_id_val, self.current_slot_num - 1
-                                )));
+                            let mut padded_values = data_values;
+                            let expected_len = column_names.len();
+                            if padded_values.len() < expected_len {
+                                padded_values.extend(std::iter::repeat(DataValue::Null).take(expected_len - padded_values.len()));
+                            } else if padded_values.len() > expected_len {
+                                padded_values.truncate(expected_len);
                             }
-                            let row = Row::from_values(column_names, data_values);
+                            let row = Row::from_values(column_names, padded_values);
                             // println!("[SCAN GET_NEXT_RECORD] Constructed row: {:?}", row);
                             self.buffer_pool.unpin_page(current_page_id_val, false).map_err(|e_unpin|
                                 QueryError::StorageError(format!("Failed to unpin page {} after successful record processing. Unpin error: {}", current_page_id_val, e_unpin))

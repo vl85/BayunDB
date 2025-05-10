@@ -4,16 +4,26 @@ use crate::common::types::PAGE_SIZE;
 pub const HEADER_SIZE: usize = 20; // 4 bytes per field * 5 fields
 pub const RECORD_OFFSET_SIZE: usize = 8; // 4 bytes for offset + 4 bytes for length
 
+#[allow(dead_code)] // Allow dead code for fields that might be used in future or more detailed page impl
+#[derive(Debug, Clone, Copy)]
 pub struct PageConstants {
     pub page_size: usize,
     pub header_size: usize,
     pub record_offset_size: usize,
+    pub slot_count_offset: usize,
+    pub free_space_pointer_offset: usize,
+    pub next_page_id_offset: usize,
+    pub lsn_offset: usize, 
 }
 
 pub const PAGE_CONSTANTS: PageConstants = PageConstants {
     page_size: PAGE_SIZE,
     header_size: HEADER_SIZE,
     record_offset_size: RECORD_OFFSET_SIZE,
+    slot_count_offset: 0,
+    free_space_pointer_offset: 0,
+    next_page_id_offset: 0,
+    lsn_offset: 0,
 };
 
 #[derive(Debug, Clone, Copy)]

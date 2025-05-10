@@ -9,6 +9,8 @@ use thiserror::Error;
 use crate::common::types::{Lsn, PageId, TxnId};
 use crate::storage::buffer::BufferPoolManager;
 use crate::transaction::wal::log_manager::{LogManager, LogManagerError};
+// TransactionManager import is reported as unused by cargo build.
+// use crate::transaction::concurrency::transaction_manager::TransactionManager;
 
 /// Error type for recovery operations
 #[derive(Error, Debug)]
@@ -64,6 +66,7 @@ pub struct DirtyPageInfo {
 }
 
 /// Manager for WAL recovery operations
+#[allow(dead_code)]
 pub struct RecoveryManager {
     /// Log manager reference
     log_manager: Arc<LogManager>,
