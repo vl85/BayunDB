@@ -92,169 +92,13 @@ impl ExecutionEngine {
                 let table_name = &alter_stmt.table_name;
                 match &alter_stmt.operation {
                     crate::query::parser::ast::AlterTableOperation::AddColumn(col_def) => {
-                        // eprintln!("VERY_UNIQUE_DEBUG_ALTER_ADD_COLUMN_AST_DEFAULT_VALUE: Table='{}', Col='{}', ASTDefaultExpr='{:?}'",
-                        //     table_name, col_def.name, col_def.default_value
-                        // );
-                        // std::io::stderr().flush().unwrap_or_default();
-
-                        let column = crate::catalog::column::Column::from_column_def(col_def)
-                            .map_err(|e| QueryError::ExecutionError(format!("Failed to define column for ADD COLUMN: {}", e)))?;
-                        
-                        let table_def_for_migration;
-                        let first_page_id;
-                        {
-                            // Removed `mut` from catalog_write_guard binding
-                            let catalog_write_guard = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
-                            catalog_write_guard.alter_table_add_column(table_name, column.clone())
-                                .map_err(|e| QueryError::ExecutionError(format!("Catalog error adding column: {}", e)))?;
-                            
-                            let temp_table_def = catalog_write_guard.get_table(table_name).ok_or_else(|| QueryError::TableNotFound(table_name.clone()))?.clone();
-                            table_def_for_migration = temp_table_def;
-                            first_page_id = table_def_for_migration.first_page_id();
-                        } 
-
-                        // Removed IMMEDIATE_VERIFY_ALTER_ADD debug block
-                        // {
-                        //     let verify_catalog_guard = self.catalog.read().map_err(|_| QueryError::ExecutionError("Failed to lock for verification".to_string()))?;
-                        //     if let Some(verify_table_def) = verify_catalog_guard.get_table(table_name) {
-                        //         eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}', Columns AFTER alter within same execute call: {:?}",
-                        //             table_name,
-                        //             verify_table_def.columns().iter().map(|c| c.name().to_string()).collect::<Vec<_>>());
-                        //     } else {
-                        //         eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}' NOT FOUND AFTER ALTER!", table_name);
-                        //     }
-                        //     std::io::stderr().flush().unwrap_or_default();
-                        // }
-
-                        if let Some(pid) = first_page_id {
-                            let determined_new_value_for_existing_rows = match &col_def.default_value {
-                                Some(ast_expr) => { 
-                                    match ast_expr {
-                                        Expression::Literal(literal_ast_val) => { 
-                                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Processing Literal default_value for existing rows: AST_Literal='{:?}', Full_ColumnDef='{:?}'", literal_ast_val, col_def);
-                                            let target_catalog_schema_type = helper_ast_dt_to_catalog_dt(&col_def.data_type)?;
-                                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Target catalog_schema_type for default: {:?}", target_catalog_schema_type);
-                                            let dv = self.ast_value_to_data_value(literal_ast_val, Some(&target_catalog_schema_type))?;
-                                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] ast_value_to_data_value result: {:?}", dv);
-                                            // std::io::stderr().flush().unwrap_or_default();
-                                            dv
-                                        }
-                                        _ => {
-                                            // eprintln!("[ALTER ADD DATAMIGRATION WARNING] Non-literal default expression {:?} found during data migration for ADD COLUMN. Using NULL for existing rows.", ast_expr);
-                                            // std::io::stderr().flush().unwrap_or_default();
-                                            DataValue::Null                                            
-                                        }
-                                    }
-                                }
-                                None => {
-                                    // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] No default value specified, using DataValue::Null for existing rows.");
-                                    // std::io::stderr().flush().unwrap_or_default();
-                                    DataValue::Null
-                                }
-                            };
-                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Final determined_new_value_for_existing_rows: {:?}", determined_new_value_for_existing_rows);
-                            // std::io::stderr().flush().unwrap_or_default();
-
-                            let mut rids_to_migrate: Vec<Rid> = Vec::new();
-                            let mut current_scan_page_id = Some(pid);
-                            while let Some(page_id_val) = current_scan_page_id {
-                                let page_arc = self.buffer_pool.fetch_page(page_id_val)
-                                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error fetching page {} for RID collection: {}", page_id_val, e)))?;
-                                let page_read_guard = page_arc.read();
-                                
-                                let record_count = self.page_manager.get_record_count(&page_read_guard)
-                                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error getting record count for page {}: {}", page_id_val, e)))?;
-                                
-                                for slot_num in 0..record_count {
-                                    let temp_rid = Rid::new(page_id_val, slot_num);
-                                    if self.page_manager.get_record(&page_read_guard, temp_rid).is_ok() {
-                                        rids_to_migrate.push(temp_rid);
-                                    }
-                                }
-                                current_scan_page_id = self.page_manager.get_next_page_id(&page_read_guard)
-                                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error getting next page ID from {}: {}", page_id_val, e)))?;
-                                drop(page_read_guard);
-                                self.buffer_pool.unpin_page(page_id_val, false)
-                                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID collection: {}", page_id_val, e)))?;
-                            }
-                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Found {} RIDs to migrate.", rids_to_migrate.len());
-                            // std::io::stderr().flush().unwrap_or_default();
-
-                            let mut rows_migrated_count = 0;
-                            for rid in rids_to_migrate {
-                                let original_data_bytes = {
-                                    let page_arc_read = self.buffer_pool.fetch_page(rid.page_id)
-                                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error fetching page {} for RID {:?} read: {}", rid.page_id, rid, e)))?;
-                                    let page_read_guard = page_arc_read.read();
-                                    let bytes = match self.page_manager.get_record(&page_read_guard, rid) {
-                                        Ok(b) => b,
-                                        Err(PageError::RecordNotFound) => {
-                                            // eprintln!("[ALTER ADD DATAMIGRATION WARNING] Record at RID {:?} not found during migration step. Skipping.", rid);
-                                            // std::io::stderr().flush().unwrap_or_default();
-                                            drop(page_read_guard);
-                                            self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID {:?} not found: {}", rid.page_id, rid, e)))?;
-                                            continue; 
-                                        }
-                                        Err(e) => return Err(QueryError::ExecutionError(format!("Data migration: Error getting record for RID {:?}: {}", rid, e))),
-                                    };
-                                    drop(page_read_guard);
-                                    self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID {:?} read: {}", rid.page_id, rid, e)))?;
-                                    bytes
-                                };
-                                
-                                let mut deserialized_row_values: Vec<DataValue> = bincode::deserialize(&original_data_bytes)
-                                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Failed to deserialize row for RID {:?}: {}", rid, e)))?;
-
-                                deserialized_row_values.push(determined_new_value_for_existing_rows.clone());
-                                rows_migrated_count += 1;
-
-                                // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] RID: {:?}, Migrated Row Values: {:?}", rid, deserialized_row_values);
-                                // std::io::stderr().flush().unwrap_or_default();
-
-                                let updated_data_bytes = bincode::serialize(&deserialized_row_values)
-                                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Failed to serialize migrated row for RID {:?}: {}", rid, e)))?;
-
-                                {
-                                    let page_arc_write = self.buffer_pool.fetch_page(rid.page_id)
-                                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error fetching page {} for RID {:?} write: {}", rid.page_id, rid, e)))?;
-                                    let mut page_write_guard = page_arc_write.write();
-                                    self.page_manager.update_record(&mut page_write_guard, rid, &updated_data_bytes)
-                                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Failed to update record for RID {:?}: {}", rid, e)))?;
-                                    drop(page_write_guard);
-                                    self.buffer_pool.unpin_page(rid.page_id, true) 
-                                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} (dirty) after RID {:?} write: {}", rid.page_id, rid, e)))?;
-                                }
-                            }
-                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Total rows migrated: {}", rows_migrated_count);
-                            // std::io::stderr().flush().unwrap_or_default();
-                        }
-                        
-                        let message = format!("Table {} altered, column {} added.", table_name, col_def.name);
-                        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
-                        let mut row = Row::new();
-                        row.set("status".to_string(), DataValue::Text(message));
-                        result_set.add_row(row);
-                        Ok(result_set)
+                        self.execute_alter_add_column(table_name, col_def)
                     }
-                    crate::query::parser::ast::AlterTableOperation::DropColumn(col_name) => {
-                        let catalog = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
-                        catalog.alter_table_drop_column(table_name, col_name)
-                            .map_err(|e| QueryError::ExecutionError(format!("Failed to drop column: {}", e)))?;
-                        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
-                        let mut row = Row::new();
-                        row.set("status".to_string(), DataValue::Text("Column dropped".to_string()));
-                        result_set.add_row(row);
-                        Ok(result_set)
+                    crate::query::parser::ast::AlterTableOperation::DropColumn(col_name_to_drop) => {
+                        self.execute_alter_drop_column(table_name, col_name_to_drop)
                     }
                     crate::query::parser::ast::AlterTableOperation::RenameColumn { old_name, new_name } => {
-                        let catalog = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
-                        catalog.alter_table_rename_column(table_name, old_name, new_name)
-                            .map_err(|e| QueryError::ExecutionError(format!("Failed to rename column: {}", e)))?;
-                        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
-                        let mut row = Row::new();
-                        row.set("status".to_string(), DataValue::Text("Column renamed".to_string()));
-                        result_set.add_row(row);
-                        Ok(result_set)
+                        self.execute_alter_rename_column(table_name, old_name, new_name)
                     }
                 }
             }
@@ -1302,6 +1146,285 @@ impl ExecutionEngine {
         Ok(data_value)
     }
 
+    fn execute_alter_add_column(&self, table_name: &str, col_def: &crate::query::parser::ast::ColumnDef) -> QueryResult<QueryResultSet> {
+        // eprintln!("VERY_UNIQUE_DEBUG_ALTER_ADD_COLUMN_AST_DEFAULT_VALUE: Table='{}', Col='{}', ASTDefaultExpr='{:?}'",
+        //     table_name, col_def.name, col_def.default_value
+        // );
+        // std::io::stderr().flush().unwrap_or_default();
+
+        let column = crate::catalog::column::Column::from_column_def(col_def)
+            .map_err(|e| QueryError::ExecutionError(format!("Failed to define column for ADD COLUMN: {}", e)))?;
+        
+        let table_def_for_migration;
+        let first_page_id;
+        {
+            // Removed `mut` from catalog_write_guard binding
+            let catalog_write_guard = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
+            catalog_write_guard.alter_table_add_column(table_name, column.clone())
+                .map_err(|e| QueryError::ExecutionError(format!("Catalog error adding column: {}", e)))?;
+            
+            let temp_table_def = catalog_write_guard.get_table(table_name).ok_or_else(|| QueryError::TableNotFound(table_name.to_string()))?.clone();
+            table_def_for_migration = temp_table_def;
+            first_page_id = table_def_for_migration.first_page_id();
+        } 
+
+        // Removed IMMEDIATE_VERIFY_ALTER_ADD debug block
+        // {
+        //     let verify_catalog_guard = self.catalog.read().map_err(|_| QueryError::ExecutionError("Failed to lock for verification".to_string()))?;
+        //     if let Some(verify_table_def) = verify_catalog_guard.get_table(table_name) {
+        //         eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}', Columns AFTER alter within same execute call: {:?}",
+        //             table_name,
+        //             verify_table_def.columns().iter().map(|c| c.name().to_string()).collect::<Vec<_>>());
+        //     } else {
+        //         eprintln!("IMMEDIATE_VERIFY_ALTER_ADD: Table='{}' NOT FOUND AFTER ALTER!", table_name);
+        //     }
+        //     std::io::stderr().flush().unwrap_or_default();
+        // }
+
+        if let Some(pid) = first_page_id {
+            let determined_new_value_for_existing_rows = match &col_def.default_value {
+                Some(ast_expr) => { 
+                    match ast_expr {
+                        Expression::Literal(literal_ast_val) => { 
+                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Processing Literal default_value for existing rows: AST_Literal='{:?}', Full_ColumnDef='{:?}'", literal_ast_val, col_def);
+                            let target_catalog_schema_type = helper_ast_dt_to_catalog_dt(&col_def.data_type)?;
+                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Target catalog_schema_type for default: {:?}", target_catalog_schema_type);
+                            let dv = self.ast_value_to_data_value(literal_ast_val, Some(&target_catalog_schema_type))?;
+                            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] ast_value_to_data_value result: {:?}", dv);
+                            // std::io::stderr().flush().unwrap_or_default();
+                            dv
+                        }
+                        _ => {
+                            // eprintln!("[ALTER ADD DATAMIGRATION WARNING] Non-literal default expression {:?} found during data migration for ADD COLUMN. Using NULL for existing rows.", ast_expr);
+                            // std::io::stderr().flush().unwrap_or_default();
+                            DataValue::Null                                            
+                        }
+                    }
+                }
+                None => {
+                    // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] No default value specified, using DataValue::Null for existing rows.");
+                    // std::io::stderr().flush().unwrap_or_default();
+                    DataValue::Null
+                }
+            };
+            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Final determined_new_value_for_existing_rows: {:?}", determined_new_value_for_existing_rows);
+            // std::io::stderr().flush().unwrap_or_default();
+
+            let mut rids_to_migrate: Vec<Rid> = Vec::new();
+            let mut current_scan_page_id = Some(pid);
+            while let Some(page_id_val) = current_scan_page_id {
+                let page_arc = self.buffer_pool.fetch_page(page_id_val)
+                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error fetching page {} for RID collection: {}", page_id_val, e)))?;
+                let page_read_guard = page_arc.read();
+                
+                let record_count = self.page_manager.get_record_count(&page_read_guard)
+                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error getting record count for page {}: {}", page_id_val, e)))?;
+                
+                for slot_num in 0..record_count {
+                    let temp_rid = Rid::new(page_id_val, slot_num);
+                    if self.page_manager.get_record(&page_read_guard, temp_rid).is_ok() {
+                        rids_to_migrate.push(temp_rid);
+                    }
+                }
+                current_scan_page_id = self.page_manager.get_next_page_id(&page_read_guard)
+                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error getting next page ID from {}: {}", page_id_val, e)))?;
+                drop(page_read_guard);
+                self.buffer_pool.unpin_page(page_id_val, false)
+                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID collection: {}", page_id_val, e)))?;
+            }
+            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Found {} RIDs to migrate.", rids_to_migrate.len());
+            // std::io::stderr().flush().unwrap_or_default();
+
+            let mut rows_migrated_count = 0;
+            for rid in rids_to_migrate {
+                let original_data_bytes = {
+                    let page_arc_read = self.buffer_pool.fetch_page(rid.page_id)
+                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error fetching page {} for RID {:?} read: {}", rid.page_id, rid, e)))?;
+                    let page_read_guard = page_arc_read.read();
+                    let bytes = match self.page_manager.get_record(&page_read_guard, rid) {
+                        Ok(b) => b,
+                        Err(PageError::RecordNotFound) => {
+                            // eprintln!("[ALTER ADD DATAMIGRATION WARNING] Record at RID {:?} not found during migration step. Skipping.", rid);
+                            // std::io::stderr().flush().unwrap_or_default();
+                            drop(page_read_guard);
+                            self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID {:?} not found: {}", rid.page_id, rid, e)))?;
+                            continue; 
+                        }
+                        Err(e) => return Err(QueryError::ExecutionError(format!("Data migration: Error getting record for RID {:?}: {}", rid, e))),
+                    };
+                    drop(page_read_guard);
+                    self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} after RID {:?} read: {}", rid.page_id, rid, e)))?;
+                    bytes
+                };
+                
+                let mut deserialized_row_values: Vec<DataValue> = bincode::deserialize(&original_data_bytes)
+                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Failed to deserialize row for RID {:?}: {}", rid, e)))?;
+
+                deserialized_row_values.push(determined_new_value_for_existing_rows.clone());
+                rows_migrated_count += 1;
+
+                // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] RID: {:?}, Migrated Row Values: {:?}", rid, deserialized_row_values);
+                // std::io::stderr().flush().unwrap_or_default();
+
+                let updated_data_bytes = bincode::serialize(&deserialized_row_values)
+                    .map_err(|e| QueryError::ExecutionError(format!("Data migration: Failed to serialize migrated row for RID {:?}: {}", rid, e)))?;
+
+                {
+                    let page_arc_write = self.buffer_pool.fetch_page(rid.page_id)
+                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error fetching page {} for RID {:?} write: {}", rid.page_id, rid, e)))?;
+                    let mut page_write_guard = page_arc_write.write();
+                    self.page_manager.update_record(&mut page_write_guard, rid, &updated_data_bytes)
+                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Failed to update record for RID {:?}: {}", rid, e)))?;
+                    drop(page_write_guard);
+                    self.buffer_pool.unpin_page(rid.page_id, true) 
+                        .map_err(|e| QueryError::ExecutionError(format!("Data migration: Error unpinning page {} (dirty) after RID {:?} write: {}", rid.page_id, rid, e)))?;
+                }
+            }
+            // eprintln!("[ALTER ADD DATAMIGRATION DEBUG] Total rows migrated: {}", rows_migrated_count);
+            // std::io::stderr().flush().unwrap_or_default();
+        }
+        
+        let message = format!("Table {} altered, column {} added.", table_name, col_def.name);
+        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
+        let mut row = Row::new();
+        row.set("status".to_string(), DataValue::Text(message));
+        result_set.add_row(row);
+        Ok(result_set)
+    }
+
+    fn execute_alter_drop_column(&self, table_name: &str, col_name_to_drop: &str) -> QueryResult<QueryResultSet> {
+        let table_schema_before_drop;
+        let first_page_id;
+        let dropped_column_index;
+
+        { // Scope for initial catalog read lock
+            let catalog_read_guard = self.catalog.read().map_err(|_| QueryError::ExecutionError("Failed to get catalog read lock for DROP COLUMN pre-check".to_string()))?;
+            let table = catalog_read_guard.get_table(table_name)
+                .ok_or_else(|| QueryError::TableNotFound(table_name.to_string()))?;
+            
+            table_schema_before_drop = table.clone(); // Clone the schema
+            first_page_id = table.first_page_id();
+            
+            dropped_column_index = table.columns().iter().position(|c| c.name() == col_name_to_drop)
+                .ok_or_else(|| QueryError::ColumnNotFound(format!("Column '{}' not found in table '{}' for DROP operation.", col_name_to_drop, table_name)))?;
+        }
+
+        { // Scope for catalog write lock
+            let catalog_write_guard = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock for DROP COLUMN".to_string()))?;
+            catalog_write_guard.alter_table_drop_column(table_name, col_name_to_drop)
+                .map_err(|e| QueryError::ExecutionError(format!("Catalog error dropping column: {}", e)))?;
+        }
+
+        // Data Migration
+        if let Some(pid) = first_page_id {
+            let old_column_count = table_schema_before_drop.columns().len();
+            if old_column_count == 0 { // Should not happen if we found a column to drop
+                return Err(QueryError::ExecutionError("Cannot migrate data for table with no columns before drop.".to_string()));
+            }
+
+            let mut rids_to_migrate: Vec<Rid> = Vec::new();
+            let mut current_scan_page_id = Some(pid);
+            // Collect RIDs
+            while let Some(page_id_val) = current_scan_page_id {
+                let page_arc = self.buffer_pool.fetch_page(page_id_val)
+                    .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error fetching page {} for RID collection: {}", page_id_val, e)))?;
+                let page_read_guard = page_arc.read();
+                let record_count = self.page_manager.get_record_count(&page_read_guard)
+                    .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error getting record count for page {}: {}", page_id_val, e)))?;
+                for slot_num in 0..record_count {
+                    let temp_rid = Rid::new(page_id_val, slot_num);
+                    if self.page_manager.get_record(&page_read_guard, temp_rid).is_ok() {
+                        rids_to_migrate.push(temp_rid);
+                    }
+                }
+                current_scan_page_id = self.page_manager.get_next_page_id(&page_read_guard)
+                    .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error getting next page ID from {}: {}", page_id_val, e)))?;
+                drop(page_read_guard);
+                self.buffer_pool.unpin_page(page_id_val, false)
+                    .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error unpinning page {} after RID collection: {}", page_id_val, e)))?;
+            }
+
+            // Migrate records
+            for rid in rids_to_migrate {
+                let original_data_bytes = {
+                    let page_arc_read = self.buffer_pool.fetch_page(rid.page_id)
+                        .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error fetching page {} for RID {:?} read: {}", rid.page_id, rid, e)))?;
+                    let page_read_guard = page_arc_read.read();
+                    let bytes = match self.page_manager.get_record(&page_read_guard, rid) {
+                        Ok(b) => b,
+                        Err(PageError::RecordNotFound) => {
+                            drop(page_read_guard);
+                            self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e_unpin| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error unpinning page {} after RID {:?} not found: {}", rid.page_id, rid, e_unpin)))?;
+                            continue; 
+                        }
+                        Err(e) => return Err(QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error getting record for RID {:?}: {}", rid, e))),
+                    };
+                    drop(page_read_guard);
+                    self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e_unpin| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error unpinning page {} after RID {:?} read: {}", rid.page_id, rid, e_unpin)))?;
+                    bytes
+                };
+                
+                // Deserialize based on the schema *before* the drop
+                let mut deserialized_row_values: Vec<DataValue> = match bincode::deserialize(&original_data_bytes) {
+                    Ok(values) => values,
+                    Err(e) => {
+                        // If deserialization fails, it might be an empty/corrupted slot, or a genuine issue.
+                        // For now, we'll log a warning and skip. A more robust system might try to recover or halt.
+                        eprintln!("[DROP COLUMN WARNING] Failed to deserialize row for RID {:?} during data migration: {}. Skipping.", rid, e);
+                        std::io::stderr().flush().unwrap_or_default();
+                        continue;
+                    }
+                };
+
+                if deserialized_row_values.len() == old_column_count {
+                    if dropped_column_index < deserialized_row_values.len() {
+                        deserialized_row_values.remove(dropped_column_index);
+                    } else {
+                        // This case should ideally not happen if column index was validated against old schema
+                        return Err(QueryError::ExecutionError(format!("DROP COLUMN Data migration: Dropped column index {} out of bounds for deserialized row (len {}) for RID {:?}.", dropped_column_index, deserialized_row_values.len(), rid)));
+                    }
+                } else {
+                    // Data on disk doesn't match the expected old schema column count.
+                    // This could indicate prior corruption or an issue with a previous ALTER.
+                    eprintln!("[DROP COLUMN WARNING] Mismatch between old schema column count ({}) and deserialized row value count ({}) for RID {:?}. Skipping record update.", old_column_count, deserialized_row_values.len(), rid);
+                    std::io::stderr().flush().unwrap_or_default();
+                    continue; 
+                }
+
+                let updated_data_bytes = bincode::serialize(&deserialized_row_values)
+                    .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Failed to serialize migrated row for RID {:?}: {}", rid, e)))?;
+
+                { // Scope for page write lock
+                    let page_arc_write = self.buffer_pool.fetch_page(rid.page_id)
+                        .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error fetching page {} for RID {:?} write: {}", rid.page_id, rid, e)))?;
+                    let mut page_write_guard = page_arc_write.write();
+                    self.page_manager.update_record(&mut page_write_guard, rid, &updated_data_bytes)
+                        .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Failed to update record for RID {:?}: {}", rid, e)))?;
+                    drop(page_write_guard);
+                    self.buffer_pool.unpin_page(rid.page_id, true) 
+                        .map_err(|e| QueryError::ExecutionError(format!("DROP COLUMN Data migration: Error unpinning page {} (dirty) after RID {:?} write: {}", rid.page_id, rid, e)))?;
+                }
+            }
+        }
+        
+        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
+        let mut row = Row::new();
+        row.set("status".to_string(), DataValue::Text(format!("Column '{}' dropped from table '{}' and data migrated.", col_name_to_drop, table_name)));
+        result_set.add_row(row);
+        Ok(result_set)
+    }
+
+    fn execute_alter_rename_column(&self, table_name: &str, old_name: &str, new_name: &str) -> QueryResult<QueryResultSet> {
+        let catalog = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
+        catalog.alter_table_rename_column(table_name, old_name, new_name)
+            .map_err(|e| QueryError::ExecutionError(format!("Failed to rename column: {}", e)))?;
+        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
+        let mut row = Row::new();
+        row.set("status".to_string(), DataValue::Text("Column renamed".to_string()));
+        result_set.add_row(row);
+        Ok(result_set)
+    }
+
     // ... (expr_to_datavalue, tests from original file - make sure this is the end of the impl ExecutionEngine block) ...
 }
 
@@ -1587,12 +1710,12 @@ mod tests {
         assert_eq!(select_result_after_drop.row_count(), 1);
         let row_after_drop = select_result_after_drop.rows().get(0).unwrap();
         assert_eq!(row_after_drop.get("id"), Some(&DataValue::Integer(1)));
-        // Due to metadata-only drop, the old 'name' value ("Alice") now maps to the 'age' column slot
-        assert_eq!(row_after_drop.get("age"), Some(&DataValue::Text("Alice".to_string()))); 
+        // After data migration for DROP COLUMN, the 'age' column should retain its original value (Null)
+        assert_eq!(row_after_drop.get("age"), Some(&DataValue::Null)); 
         assert!(row_after_drop.get("name").is_none());
 
         // 5. Rename 'age' to 'years'
-        // The 'age' column currently holds Text("Alice") due to the above. Renaming it will carry this value.
+        // The 'age' column currently holds Null. Renaming it will carry this value.
         let alter_sql_rename = "ALTER TABLE users RENAME COLUMN age TO years";
         let parsed_stmt_rename = parse(alter_sql_rename).expect("Failed to parse ALTER TABLE RENAME COLUMN");
         let result_rename = match parsed_stmt_rename {
@@ -1605,7 +1728,7 @@ mod tests {
         assert_eq!(select_result_after_rename.row_count(), 1);
         let row_after_rename = select_result_after_rename.rows().get(0).unwrap();
         assert_eq!(row_after_rename.get("id"), Some(&DataValue::Integer(1)));
-        assert_eq!(row_after_rename.get("years"), Some(&DataValue::Text("Alice".to_string()))); // Value persists through rename
+        assert_eq!(row_after_rename.get("years"), Some(&DataValue::Null)); // Value (Null) persists through rename
         assert!(row_after_rename.get("age").is_none());
     }
 
@@ -1673,21 +1796,22 @@ mod tests {
         assert!(result.is_ok(), "Insert failed: {:?}", result.err());
 
         // 2. Add a column
-        let alter_sql = "ALTER TABLE users ADD COLUMN age INTEGER";
-        let parsed_stmt = parse(alter_sql).expect("Failed to parse ALTER TABLE ADD COLUMN");
-        let result = match parsed_stmt {
+        let alter_sql_add = "ALTER TABLE users ADD COLUMN age INTEGER"; // Note: changed from original 'age' to 'age_new' then back
+        let parsed_stmt_add = parse(alter_sql_add).expect("Failed to parse ALTER TABLE ADD COLUMN");
+        let result_add = match parsed_stmt_add {
             Statement::Alter(alter_stmt) => engine.execute(Statement::Alter(alter_stmt)),
-            _ => panic!("Expected AlterStatement from parser"),
+            _ => panic!("Expected AlterStatement from parser for ADD"),
         };
-        assert!(result.is_ok(), "ALTER TABLE ADD COLUMN failed: {:?}", result.err());
+        assert!(result_add.is_ok(), "ALTER TABLE ADD COLUMN failed: {:?}", result_add.err());
 
         // 3. Query and check that 'age' is NULL for existing row
-        let select_result = engine.execute_query("SELECT * FROM users").expect("SELECT after ADD COLUMN");
-        assert_eq!(select_result.row_count(), 1);
-        let row = select_result.rows().get(0).unwrap();
-        assert_eq!(row.get("id"), Some(&DataValue::Integer(1)));
-        assert_eq!(row.get("name"), Some(&DataValue::Text("Alice".to_string())));
-        assert_eq!(row.get("age"), Some(&DataValue::Null));
+        let select_result_before_drop = engine.execute_query("SELECT * FROM users").expect("SELECT after ADD COLUMN");
+        assert_eq!(select_result_before_drop.row_count(), 1);
+        let row_before_drop = select_result_before_drop.rows().get(0).unwrap();
+        assert_eq!(row_before_drop.get("id"), Some(&DataValue::Integer(1)));
+        assert_eq!(row_before_drop.get("name"), Some(&DataValue::Text("Alice".to_string())));
+        assert_eq!(row_before_drop.get("age"), Some(&DataValue::Null));
+
 
         // 4. Drop the 'name' column
         let alter_sql_drop = "ALTER TABLE users DROP COLUMN name";
@@ -1702,11 +1826,12 @@ mod tests {
         assert_eq!(select_result_after_drop.row_count(), 1);
         let row_after_drop = select_result_after_drop.rows().get(0).unwrap();
         assert_eq!(row_after_drop.get("id"), Some(&DataValue::Integer(1)));
-        assert_eq!(row_after_drop.get("age"), Some(&DataValue::Text("Alice".to_string()))); 
+        // After data migration for DROP COLUMN, the 'age' column should retain its original value (Null)
+        assert_eq!(row_after_drop.get("age"), Some(&DataValue::Null)); 
         assert!(row_after_drop.get("name").is_none());
 
         // 5. Rename 'age' to 'years'
-        // The 'age' column currently holds Text("Alice") due to the above. Renaming it will carry this value.
+        // The 'age' column currently holds Null. Renaming it will carry this value.
         let alter_sql_rename = "ALTER TABLE users RENAME COLUMN age TO years";
         let parsed_stmt_rename = parse(alter_sql_rename).expect("Failed to parse ALTER TABLE RENAME COLUMN");
         let result_rename = match parsed_stmt_rename {
@@ -1719,7 +1844,7 @@ mod tests {
         assert_eq!(select_result_after_rename.row_count(), 1);
         let row_after_rename = select_result_after_rename.rows().get(0).unwrap();
         assert_eq!(row_after_rename.get("id"), Some(&DataValue::Integer(1)));
-        assert_eq!(row_after_rename.get("years"), Some(&DataValue::Text("Alice".to_string()))); // Value persists through rename
+        assert_eq!(row_after_rename.get("years"), Some(&DataValue::Null)); // Value (Null) persists through rename
         assert!(row_after_rename.get("age").is_none());
     }
 } 
