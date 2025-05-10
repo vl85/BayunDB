@@ -7,6 +7,8 @@ use bayundb::query::planner::Planner;
 use bayundb::storage::buffer::BufferPoolManager;
 use std::sync::Arc;
 use tempfile::tempdir;
+use bayundb::catalog::Catalog;
+use std::sync::RwLock;
 
 #[test]
 fn test_count_query() -> Result<()> {
@@ -227,7 +229,7 @@ fn test_complex_aggregation_query() -> Result<()> {
 fn test_end_to_end_count_query() -> Result<()> {
     // Create a temporary database for testing
     let temp_dir = tempdir()?;
-    let db_path = temp_dir.path().join("test_agg.db");
+    let db_path = temp_dir.path().join("test_agg_count.db");
     
     // Initialize buffer pool
     let buffer_pool = Arc::new(BufferPoolManager::new(
@@ -235,8 +237,9 @@ fn test_end_to_end_count_query() -> Result<()> {
         db_path.to_str().unwrap().to_string()
     ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
     
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool);
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
     
     // Simple COUNT(*) query
     let sql = "SELECT COUNT(*) FROM test_table";
@@ -273,7 +276,7 @@ fn test_end_to_end_count_query() -> Result<()> {
 fn test_end_to_end_group_by_query() -> Result<()> {
     // Create a temporary database for testing
     let temp_dir = tempdir()?;
-    let db_path = temp_dir.path().join("test_agg_group.db");
+    let db_path = temp_dir.path().join("test_agg_group_by.db");
     
     // Initialize buffer pool
     let buffer_pool = Arc::new(BufferPoolManager::new(
@@ -281,8 +284,9 @@ fn test_end_to_end_group_by_query() -> Result<()> {
         db_path.to_str().unwrap().to_string()
     ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
     
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool);
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
     
     // Group by query - group by department_id which is a modulo of id
     // This will create groups 0, 1, 2, 3, 4 (with id % 5)
@@ -323,7 +327,7 @@ fn test_end_to_end_group_by_query() -> Result<()> {
 fn test_end_to_end_aggregation_functions() -> Result<()> {
     // Create a temporary database for testing
     let temp_dir = tempdir()?;
-    let db_path = temp_dir.path().join("test_agg_funcs.db");
+    let db_path = temp_dir.path().join("test_agg_functions.db");
     
     // Initialize buffer pool
     let buffer_pool = Arc::new(BufferPoolManager::new(
@@ -331,8 +335,9 @@ fn test_end_to_end_aggregation_functions() -> Result<()> {
         db_path.to_str().unwrap().to_string()
     ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
     
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool);
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
     
     // Query with multiple aggregate functions
     let sql = "SELECT MIN(id), MAX(id), SUM(id), AVG(id), COUNT(*) FROM test_table";
@@ -413,8 +418,9 @@ fn test_end_to_end_having_clause() -> Result<()> {
         db_path.to_str().unwrap().to_string()
     ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
     
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool);
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
     
     // Query with GROUP BY and HAVING
     // We'll group by id % 5 (creating 5 groups) and filter for groups with count > 3
@@ -451,7 +457,7 @@ fn test_end_to_end_having_clause() -> Result<()> {
 fn test_end_to_end_complex_grouping() -> Result<()> {
     // Create a temporary database for testing
     let temp_dir = tempdir()?;
-    let db_path = temp_dir.path().join("test_complex_group.db");
+    let db_path = temp_dir.path().join("test_agg_complex.db");
     
     // Initialize buffer pool
     let buffer_pool = Arc::new(BufferPoolManager::new(
@@ -459,8 +465,9 @@ fn test_end_to_end_complex_grouping() -> Result<()> {
         db_path.to_str().unwrap().to_string()
     ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
     
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool);
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc);
     
     // Complex query with multiple group by columns, filter, and multiple aggregates
     let sql = "SELECT id % 3 as dept_id, id % 2 as job_type, COUNT(*), MIN(id), MAX(id) 
@@ -519,14 +526,11 @@ fn test_end_to_end_complex_grouping() -> Result<()> {
 }
 
 #[test]
-#[ignore] // Temporarily skip until parser is updated to handle complex expressions
+#[ignore] // Temporarily skip until Hash vs Sort aggregation strategy is implemented
 fn test_hash_vs_sort_aggregation() -> Result<()> {
-    // This test compares the results of hash-based and sort-based aggregation
-    // to ensure they produce the same results
-    
     // Create a temporary database for testing
     let temp_dir = tempdir()?;
-    let db_path = temp_dir.path().join("test_agg_compare.db");
+    let db_path = temp_dir.path().join("test_agg_hash_sort.db");
     
     // Initialize buffer pool
     let buffer_pool = Arc::new(BufferPoolManager::new(
@@ -534,8 +538,12 @@ fn test_hash_vs_sort_aggregation() -> Result<()> {
         db_path.to_str().unwrap().to_string()
     ).map_err(|e| anyhow!("Failed to create buffer pool: {:?}", e))?);
     
-    // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool.clone());
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
+    // Create execution engine for hash aggregation
+    let engine_hash = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
+    
+    // Create execution engine for sort aggregation
+    let engine_sort = ExecutionEngine::new(buffer_pool.clone(), catalog_arc.clone());
     
     // The query to test
     let sql = "SELECT id % 7 as group_id, COUNT(*), SUM(id), MIN(id), MAX(id) 
@@ -543,9 +551,9 @@ fn test_hash_vs_sort_aggregation() -> Result<()> {
                GROUP BY id % 7";
     
     // Execute the same query twice to ensure consistent results
-    let first_result = engine.execute_query(sql)
+    let first_result = engine_hash.execute_query(sql)
         .map_err(|e| anyhow!("First query execution failed: {:?}", e))?;
-    let second_result = engine.execute_query(sql)
+    let second_result = engine_sort.execute_query(sql)
         .map_err(|e| anyhow!("Second query execution failed: {:?}", e))?;
     
     // Verify both result sets have the same structure

@@ -8,26 +8,28 @@ use bayundb::query::parser::parse;
 use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::catalog::{Catalog, DataType};
 use tempfile::NamedTempFile;
+use std::sync::RwLock;
 
-// Helper function to create an execution engine with a temporary database
-fn create_test_engine() -> (ExecutionEngine, NamedTempFile) {
+// Helper function to create an execution engine with a temporary database and a fresh catalog
+fn create_test_engine() -> (ExecutionEngine, NamedTempFile, Arc<RwLock<Catalog>>) {
     // Create a temporary database file
     let temp_file = NamedTempFile::new().unwrap();
     let path = temp_file.path().to_str().unwrap().to_string();
     
     // Create buffer pool manager
     let buffer_pool = Arc::new(BufferPoolManager::new(100, path).unwrap());
+    let catalog_arc = Arc::new(RwLock::new(Catalog::new()));
     
     // Create execution engine
-    let engine = ExecutionEngine::new(buffer_pool);
+    let engine = ExecutionEngine::new(buffer_pool, catalog_arc.clone());
     
-    (engine, temp_file)
+    (engine, temp_file, catalog_arc)
 }
 
 #[test]
 fn test_create_table_with_primary_key() {
     // Set up test environment
-    let (engine, _temp_file) = create_test_engine();
+    let (engine, _temp_file, catalog_arc) = create_test_engine();
     
     // Define a CREATE TABLE statement with a primary key
     let sql = "CREATE TABLE products (
@@ -44,9 +46,8 @@ fn test_create_table_with_primary_key() {
     // Verify execution result
     assert_eq!(result.row_count(), 1);
     
-    // Access the global catalog
-    let catalog_instance = Catalog::instance();
-    let catalog = catalog_instance.read().unwrap();
+    // Access the catalog for this test
+    let catalog = catalog_arc.read().unwrap();
     
     // Check that the catalog has the table
     assert!(catalog.table_exists("products"));
@@ -73,7 +74,7 @@ fn test_create_table_with_primary_key() {
 #[test]
 fn test_create_tables_with_different_data_types() {
     // Set up test environment
-    let (engine, _temp_file) = create_test_engine();
+    let (engine, _temp_file, catalog_arc) = create_test_engine();
     
     // Define a CREATE TABLE statement with various data types
     let sql = "CREATE TABLE data_types_test (
@@ -92,9 +93,8 @@ fn test_create_tables_with_different_data_types() {
     // Verify execution result
     assert_eq!(result.row_count(), 1);
     
-    // Access the global catalog
-    let catalog_instance = Catalog::instance();
-    let catalog = catalog_instance.read().unwrap();
+    // Access the catalog for this test
+    let catalog = catalog_arc.read().unwrap();
     
     // Check that the catalog has the table
     assert!(catalog.table_exists("data_types_test"));
@@ -113,7 +113,7 @@ fn test_create_tables_with_different_data_types() {
 #[test]
 fn test_multiple_table_creation() {
     // Set up test environment
-    let (engine, _temp_file) = create_test_engine();
+    let (engine, _temp_file, catalog_arc) = create_test_engine();
     
     // Create first table
     let sql1 = "CREATE TABLE customers (
@@ -137,9 +137,8 @@ fn test_multiple_table_creation() {
     engine.execute(statement1).unwrap();
     engine.execute(statement2).unwrap();
     
-    // Access the global catalog
-    let catalog_instance = Catalog::instance();
-    let catalog = catalog_instance.read().unwrap();
+    // Access the catalog for this test
+    let catalog = catalog_arc.read().unwrap();
     
     // Check that both tables exist
     assert!(catalog.table_exists("customers"));

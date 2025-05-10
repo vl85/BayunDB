@@ -44,9 +44,22 @@ impl FilterOperator {
             },
             
             Expression::Column(col_ref) => {
-                let column_name = &col_ref.name;
-                let value = row.get(column_name)
-                    .ok_or_else(|| QueryError::ColumnNotFound(column_name.clone()))?;
+                // Construct the name to look up in the row.
+                // If col_ref.table is Some (e.g., "t1.id" in predicate), use "t1.id".
+                // If col_ref.table is None (e.g., "id" in predicate), use "self.table_name.id" 
+                // (where self.table_name is the alias of the FilterOperator's input).
+                let lookup_name = match &col_ref.table {
+                    Some(table_qualifier) => format!("{}.{}", table_qualifier, col_ref.name),
+                    None => {
+                        // Predicate has unqualified column, e.g., "id > 5"
+                        // Assume it refers to the input table/alias of this filter operator.
+                        // TableScanOperator produces aliased names like "alias.id".
+                        format!("{}.{}", self.table_name, col_ref.name)
+                    }
+                };
+
+                let value = row.get(&lookup_name)
+                    .ok_or_else(|| QueryError::ColumnNotFound(lookup_name.clone()))?;
                 
                 Ok(value.clone())
             },
@@ -311,48 +324,49 @@ mod tests {
     fn test_filter_operation() {
         // Create test data
         let mut rows = Vec::new();
-        
+        let table_alias = "test_table"; // The alias used when creating FilterOperator
+
         let mut row1 = Row::new();
-        row1.set("id".to_string(), DataValue::Integer(1));
-        row1.set("value".to_string(), DataValue::Integer(10));
+        row1.set(format!("{}.id", table_alias), DataValue::Integer(1));
+        row1.set(format!("{}.value", table_alias), DataValue::Integer(10));
         rows.push(row1);
         
         let mut row2 = Row::new();
-        row2.set("id".to_string(), DataValue::Integer(2));
-        row2.set("value".to_string(), DataValue::Integer(20));
+        row2.set(format!("{}.id", table_alias), DataValue::Integer(2));
+        row2.set(format!("{}.value", table_alias), DataValue::Integer(20));
         rows.push(row2);
         
         let mut row3 = Row::new();
-        row3.set("id".to_string(), DataValue::Integer(3));
-        row3.set("value".to_string(), DataValue::Integer(30));
+        row3.set(format!("{}.id", table_alias), DataValue::Integer(3));
+        row3.set(format!("{}.value", table_alias), DataValue::Integer(30));
         rows.push(row3);
         
         // Create dummy operator that will return our test data
         let dummy = Arc::new(Mutex::new(DummyOperator::new(rows)));
         
-        // Create a filter expression: value > 15
+        // Create a filter expression: value > 15 (unqualified column name)
         let expression = Expression::BinaryOp {
             left: Box::new(Expression::Column(ColumnReference {
-                table: None,
+                table: None, // Unqualified, will use FilterOperator's table_name (alias)
                 name: "value".to_string(),
             })),
             op: AstOperator::GreaterThan,
             right: Box::new(Expression::Literal(Value::Integer(15))),
         };
         
-        // Create filter operator
-        let mut filter = FilterOperator::new(dummy, expression, "test_table".to_string());
+        // Create filter operator, providing the alias of the input
+        let mut filter = FilterOperator::new(dummy, expression, table_alias.to_string());
         
         // Initialize the filter
         filter.init().unwrap();
         
         // Get the first row (should be row2)
         let result = filter.next().unwrap().unwrap();
-        assert_eq!(result.get("id"), Some(&DataValue::Integer(2)));
+        assert_eq!(result.get(&format!("{}.id", table_alias)), Some(&DataValue::Integer(2)));
         
         // Get the second row (should be row3)
         let result = filter.next().unwrap().unwrap();
-        assert_eq!(result.get("id"), Some(&DataValue::Integer(3)));
+        assert_eq!(result.get(&format!("{}.id", table_alias)), Some(&DataValue::Integer(3)));
         
         // There should be no more rows
         assert!(filter.next().unwrap().is_none());
@@ -362,10 +376,11 @@ mod tests {
     fn test_type_compatibility() {
         // Create test data
         let mut rows = Vec::new();
-        
+        let table_alias = "test_table";
+
         let mut row1 = Row::new();
-        row1.set("id".to_string(), DataValue::Integer(1));
-        row1.set("name".to_string(), DataValue::Text("Test".to_string()));
+        row1.set(format!("{}.id", table_alias), DataValue::Integer(1));
+        row1.set(format!("{}.name", table_alias), DataValue::Text("Test".to_string()));
         rows.push(row1);
         
         // Create dummy operator that will return our test data
@@ -374,18 +389,18 @@ mod tests {
         // Create an invalid filter expression: id + name
         let expression = Expression::BinaryOp {
             left: Box::new(Expression::Column(ColumnReference {
-                table: None,
+                table: None, // Unqualified
                 name: "id".to_string(),
             })),
             op: AstOperator::Plus,
             right: Box::new(Expression::Column(ColumnReference {
-                table: None,
+                table: None, // Unqualified
                 name: "name".to_string(),
             })),
         };
         
         // Create filter operator
-        let mut filter = FilterOperator::new(dummy, expression, "test_table".to_string());
+        let mut filter = FilterOperator::new(dummy, expression, table_alias.to_string());
         
         // Initialize the filter
         filter.init().unwrap();

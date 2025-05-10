@@ -3,12 +3,16 @@
 // This module implements the engine for executing SQL queries.
 
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageManager;
 use crate::query::executor::result::{QueryResult, QueryError, QueryResultSet, DataValue, Row};
 use crate::query::parser::ast::{Statement, SelectStatement, Expression, CreateStatement};
-use crate::query::planner::{Planner, physical};
+use crate::query::parser::parse;
+use crate::query::planner::{Planner, PhysicalPlan};
+use crate::query::planner::operator_builder::OperatorBuilder;
+use crate::catalog::Catalog;
 
 #[cfg(test)]
 use crate::query::parser::ast::{SelectColumn, ColumnReference, TableReference};
@@ -19,20 +23,28 @@ pub struct ExecutionEngine {
     /// Buffer pool manager for storage access
     buffer_pool: Arc<BufferPoolManager>,
     
+    /// Catalog for schema information
+    catalog: Arc<RwLock<Catalog>>,
+    
     /// Query planner
     planner: Planner,
     
     /// Page manager for record handling
     page_manager: PageManager,
+    
+    /// Operator builder
+    operator_builder: OperatorBuilder,
 }
 
 impl ExecutionEngine {
-    /// Create a new execution engine with the given buffer pool
-    pub fn new(buffer_pool: Arc<BufferPoolManager>) -> Self {
+    /// Create a new execution engine with the given buffer pool and catalog
+    pub fn new(buffer_pool: Arc<BufferPoolManager>, catalog: Arc<RwLock<Catalog>>) -> Self {
         ExecutionEngine {
-            buffer_pool,
-            planner: Planner::new(),
+            buffer_pool: buffer_pool.clone(),
+            catalog: catalog.clone(),
+            planner: Planner::new(buffer_pool.clone(), catalog.clone()),
             page_manager: PageManager::new(),
+            operator_builder: OperatorBuilder::new(buffer_pool, catalog),
         }
     }
     
@@ -60,9 +72,9 @@ impl ExecutionEngine {
     }
     
     /// Execute a physical plan by building and running an operator tree
-    fn execute_physical_plan(&self, plan: &physical::PhysicalPlan) -> QueryResult<QueryResultSet> {
+    fn execute_physical_plan(&self, plan: &PhysicalPlan) -> QueryResult<QueryResultSet> {
         // Build operator tree from physical plan
-        let root_op = physical::build_operator_tree(plan)?;
+        let root_op = self.operator_builder.build_operator_tree(plan)?;
         
         // Initialize the operator
         {
@@ -74,7 +86,7 @@ impl ExecutionEngine {
         
         // Extract expected column names from the plan
         let expected_columns = match plan {
-            physical::PhysicalPlan::HashAggregate { aggregate_expressions, group_by, .. } => {
+            PhysicalPlan::HashAggregate { aggregate_expressions, group_by, .. } => {
                 let mut columns = Vec::new();
                 
                 // Add group by columns first
@@ -159,7 +171,7 @@ impl ExecutionEngine {
                 
                 columns
             }
-            physical::PhysicalPlan::Project { columns, .. } => columns.clone(),
+            PhysicalPlan::Project { columns, .. } => columns.clone(),
             _ => Vec::new(),
         };
         
@@ -219,8 +231,28 @@ impl ExecutionEngine {
     
     /// Parse and execute a SQL query string
     pub fn execute_query(&self, query: &str) -> QueryResult<QueryResultSet> {
-        // Use the planner to create a logical plan from the SQL
-        let logical_plan = self.planner.create_logical_plan_from_sql(query)?;
+        // Parse the SQL into a statement
+        let statement = parse(query)
+            .map_err(|e| QueryError::PlanningError(format!("Parse error: {:?}", e)))?;
+        
+        // Check if this is a DDL statement that should use direct execution
+        match &statement {
+            // DDL statements that should bypass the operator tree
+            Statement::Create(_) => {
+                // Route directly to the execute method
+                return self.execute(statement);
+            },
+            // In the future, other DDL operations can be added here
+            // Statement::Drop(_) => return self.execute(statement),
+            // Statement::Alter(_) => return self.execute(statement),
+            
+            // Continue with regular query planning for DML statements
+            _ => {}
+        }
+        
+        // For non-DDL statements, continue with the planning approach
+        // Create a logical plan from the statement
+        let logical_plan = self.planner.create_logical_plan(&statement)?;
         
         // Create a physical plan from the logical plan
         let physical_plan = self.planner.create_physical_plan(&logical_plan)?;
@@ -234,8 +266,8 @@ impl ExecutionEngine {
         use crate::catalog::{Catalog, Table, Column};
         use crate::query::executor::result::DataValue;
         
-        // Get the global catalog instance
-        let catalog_instance = Catalog::instance();
+        // Use the injected catalog instance
+        let catalog_instance = self.catalog.clone();
         
         // Create the table and columns outside the lock scope
         let mut columns = Vec::new();
@@ -248,12 +280,11 @@ impl ExecutionEngine {
         // Create the table
         let table = Table::new(create.table_name.clone(), columns);
         
-        // Use a block to ensure the write lock is released after we're done with it
-        {
-            let mut catalog = catalog_instance.write().unwrap();
-            catalog.create_table(table)
-                .map_err(|e| QueryError::ExecutionError(format!("Failed to create table: {}", e)))?;
-        }
+        // Acquire a write lock on the catalog to create the table
+        let mut catalog_guard = catalog_instance.write().map_err(|e| 
+            QueryError::ExecutionError(format!("Failed to acquire catalog write lock: {}", e)))?;
+        catalog_guard.create_table(table)
+            .map_err(|e| QueryError::ExecutionError(format!("Failed to create table: {}", e)))?;
         
         // Return success message
         let mut result = QueryResultSet::new(vec!["result".to_string()]);
@@ -281,59 +312,72 @@ mod tests {
     
     #[test]
     fn test_execution_engine() {
-        // This is a minimal test - real functionality will depend on
-        // the table scan operator implementation
-        let (buffer_pool, _temp_file) = create_test_db();
-        
-        let engine = ExecutionEngine::new(buffer_pool);
-        
-        // Create a mock SELECT statement
-        let select = Statement::Select(SelectStatement {
-            columns: vec![],
-            from: vec![crate::query::parser::ast::TableReference {
-                name: "users".to_string(),
-                alias: None,
-            }],
-            where_clause: None,
-            joins: vec![],
-            group_by: None,
-            having: None,
-        });
-        
-        // This will likely fail since we don't have a real table,
-        // but it tests that the engine can dispatch to the right handler
-        let _ = engine.execute(select);
+        let (buffer_pool, _db_file) = create_test_db();
+        let catalog = Arc::new(RwLock::new(Catalog::new()));
+        let engine = ExecutionEngine::new(buffer_pool, catalog);
+        assert!(engine.execute_query("SELECT * FROM users").is_err()); // users table doesn't exist yet
     }
     
     #[test]
     fn test_query_execution() {
-        let (buffer_pool, _temp_file) = create_test_db();
+        let (buffer_pool, _db_file) = create_test_db();
+        let catalog = Arc::new(RwLock::new(Catalog::new()));
+        let engine = ExecutionEngine::new(buffer_pool.clone(), catalog.clone());
         
-        let engine = ExecutionEngine::new(buffer_pool);
+        // Create a test table
+        let create_query = "CREATE TABLE users (id INTEGER, name TEXT)";
+        let create_result = engine.execute_query(create_query);
+        assert!(create_result.is_ok(), "Table creation should succeed");
         
-        // We only support test_table in our scan operator's stub implementation
-        let result = engine.execute_query("SELECT * FROM test_table");
+        // Test a query with projection - should still work with our stub operators
+        let result = engine.execute_query("SELECT id, name FROM users");
         
-        // In our current stub implementation, this should succeed for test_table
+        // Log error details if test fails
+        if let Err(ref err) = result {
+            println!("Projection query failed: {:?}", err);
+        }
+        
         assert!(result.is_ok());
         
-        // But it will fail for a non-existent table
-        let result = engine.execute_query("SELECT * FROM nonexistent_table");
-        assert!(result.is_err());
+        // Test with a filter that should filter out some rows
+        let result = engine.execute_query("SELECT * FROM users WHERE id = 5");
+        
+        // Log error details if test fails
+        if let Err(ref err) = result {
+            println!("Filter query failed: {:?}", err);
+        }
+        
+        // Even though filter is implemented, we're using a table scan that generates
+        // fake data, so we can't test actual filtering logic here very well
+        assert!(result.is_ok());
     }
     
     #[test]
     fn test_end_to_end_query_execution() {
-        let (buffer_pool, _temp_file) = create_test_db();
-        
-        let engine = ExecutionEngine::new(buffer_pool);
+        let (buffer_pool, _db_file) = create_test_db();
+        let catalog = Arc::new(RwLock::new(Catalog::new()));
+        let engine = ExecutionEngine::new(buffer_pool.clone(), catalog.clone());
+
+        // Create table
+        engine.execute_query("CREATE TABLE test_data (id INTEGER, name TEXT, age INTEGER)").unwrap();
         
         // Test a query with projection - should still work with our stub operators
-        let result = engine.execute_query("SELECT id, name FROM test_table");
+        let result = engine.execute_query("SELECT id, name FROM test_data");
+        
+        // Log error details if test fails
+        if let Err(ref err) = result {
+            println!("Projection query failed: {:?}", err);
+        }
+        
         assert!(result.is_ok());
         
         // Test with a filter that should filter out some rows
-        let result = engine.execute_query("SELECT * FROM test_table WHERE id = 5");
+        let result = engine.execute_query("SELECT * FROM test_data WHERE id = 5");
+        
+        // Log error details if test fails
+        if let Err(ref err) = result {
+            println!("Filter query failed: {:?}", err);
+        }
         
         // Even though filter is implemented, we're using a table scan that generates
         // fake data, so we can't test actual filtering logic here very well
@@ -342,11 +386,12 @@ mod tests {
     
     #[test]
     fn test_execute_select() {
-        // Create a test database with temporary file
-        let (buffer_pool, _temp_file) = create_test_db();
-        
-        // Create execution engine
-        let engine = ExecutionEngine::new(buffer_pool);
+        let (buffer_pool, _db_file) = create_test_db();
+        let catalog = Arc::new(RwLock::new(Catalog::new()));
+        let engine = ExecutionEngine::new(buffer_pool.clone(), catalog.clone());
+
+        // Create a table and insert some data
+        engine.execute_query("CREATE TABLE test_data (id INTEGER, name TEXT)").unwrap();
         
         // Create a SELECT statement
         let select = Statement::Select(SelectStatement {
@@ -361,7 +406,7 @@ mod tests {
                 }),
             ],
             from: vec![TableReference {
-                name: "users".to_string(),
+                name: "test_data".to_string(), // Use test_data instead of users
                 alias: None,
             }],
             where_clause: None,
@@ -370,13 +415,25 @@ mod tests {
             having: None,
         });
         
-        // Try to build a plan
+        // Try to build a plan using the planner directly
         let result = engine.planner.create_logical_plan(&select);
         
         // Should succeed
         assert!(result.is_ok());
         
-        // Just verify the engine is created
-        assert!(engine.execute_query("SELECT * FROM test_table").is_ok());
+        // Verify the engine can create a physical plan
+        let physical_plan = engine.planner.create_physical_plan(&result.unwrap());
+        assert!(physical_plan.is_ok());
+    }
+    
+    #[test]
+    fn test_create_table() {
+        let (buffer_pool, _db_file) = create_test_db();
+        let catalog = Arc::new(RwLock::new(Catalog::new()));
+        let engine = ExecutionEngine::new(buffer_pool, catalog.clone());
+        
+        let query = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INTEGER)";
+        let create_result = engine.execute_query(query);
+        assert!(create_result.is_ok(), "Table creation should succeed");
     }
 } 

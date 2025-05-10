@@ -12,11 +12,15 @@ use crate::query::executor::result::{Row, QueryResult, QueryError, DataValue};
 /// Hash Join operator implementation
 pub struct HashJoin {
     /// Left input operator (build side)
-    left: Arc<Mutex<dyn Operator>>,
+    left: Arc<Mutex<dyn Operator + Send>>,
     /// Right input operator (probe side)
-    right: Arc<Mutex<dyn Operator>>,
+    right: Arc<Mutex<dyn Operator + Send>>,
     /// Join condition (must be an equality condition)
     condition: String,
+    /// Left table alias
+    left_alias: String,
+    /// Right table alias
+    right_alias: String,
     /// Hash table for join
     hash_table: HashMap<DataValue, Vec<Row>>,
     /// Indicates if the hash table has been built
@@ -40,15 +44,19 @@ pub struct HashJoin {
 impl HashJoin {
     /// Create a new hash join operator
     pub fn new(
-        left: Arc<Mutex<dyn Operator>>,
-        right: Arc<Mutex<dyn Operator>>,
+        left: Arc<Mutex<dyn Operator + Send>>,
+        right: Arc<Mutex<dyn Operator + Send>>,
         condition: String,
         is_left_join: bool,
+        left_alias: String,
+        right_alias: String,
     ) -> Self {
         HashJoin {
             left,
             right,
             condition,
+            left_alias,
+            right_alias,
             hash_table: HashMap::new(),
             hash_table_built: false,
             current_right_row: None,
@@ -191,14 +199,32 @@ impl Operator for HashJoin {
             let left_row = &self.current_matches[self.current_match_index];
             self.current_match_index += 1;
             
-            // Create a joined row
-            let mut joined_row = left_row.clone();
+            let mut joined_row = Row::new(); // Start with an empty row
+
+            // Add columns from the left_row, prefixed with left_alias
+            for left_col_name in left_row.columns() {
+                if let Some(value) = left_row.get(left_col_name) {
+                    // Only prefix if alias is not empty, to handle cases where root table might not have an alias
+                    let qualified_name = if !self.left_alias.is_empty() {
+                        format!("{}.{}", self.left_alias, left_col_name)
+                    } else {
+                        left_col_name.clone()
+                    };
+                    joined_row.set(qualified_name, value.clone());
+                }
+            }
             
-            // Add all columns from right row
+            // Add all columns from right row, prefixed with right_alias
             if let Some(right_row) = &self.current_right_row {
-                for column in right_row.columns() {
-                    if let Some(value) = right_row.get(column) {
-                        joined_row.set(column.clone(), value.clone());
+                for right_col_name in right_row.columns() {
+                    if let Some(value) = right_row.get(right_col_name) {
+                        // Only prefix if alias is not empty
+                        let qualified_name = if !self.right_alias.is_empty() {
+                            format!("{}.{}", self.right_alias, right_col_name)
+                        } else {
+                            right_col_name.clone()
+                        };
+                        joined_row.set(qualified_name, value.clone());
                     }
                 }
             }
@@ -216,12 +242,30 @@ impl Operator for HashJoin {
                 let left_row = &self.unmatched_left_rows[self.unmatched_index];
                 self.unmatched_index += 1;
                 
-                // Create a joined row with NULL values for right columns
-                let joined_row = left_row.clone();
+                let mut joined_row = Row::new(); // Start with an empty row
+                for left_col_name in left_row.columns() {
+                    if let Some(value) = left_row.get(left_col_name) {
+                        // Only prefix if alias is not empty
+                        let qualified_name = if !self.left_alias.is_empty() {
+                            format!("{}.{}", self.left_alias, left_col_name)
+                        } else {
+                            left_col_name.clone()
+                        };
+                        joined_row.set(qualified_name, value.clone());
+                    }
+                }
                 
-                // For a real implementation, we would add NULL values for all right columns
-                // based on the schema information
-                
+                // TODO: Add NULL values for all right columns, prefixed with right_alias (if not empty).
+                // This requires knowing the schema of the right input.
+                // For example, if right schema has columns c1, c2:
+                // if !self.right_alias.is_empty() {
+                //     joined_row.set(format!("{}.c1", self.right_alias), DataValue::Null);
+                //     joined_row.set(format!("{}.c2", self.right_alias), DataValue::Null);
+                // } else {
+                //     joined_row.set("c1".to_string(), DataValue::Null);
+                //     joined_row.set("c2".to_string(), DataValue::Null);
+                // }
+
                 return Ok(Some(joined_row));
             }
             
@@ -275,6 +319,8 @@ mod tests {
             right_op.clone(),
             "id = id".to_string(),
             false,
+            "left_table".to_string(),
+            "right_table".to_string(),
         );
         
         // Initialize the operator
@@ -282,14 +328,16 @@ mod tests {
         
         // Get joined rows
         let row1 = join_op.next().unwrap().unwrap();
-        assert_eq!(row1.get("id"), Some(&DataValue::Integer(1)));
-        assert_eq!(row1.get("name"), Some(&DataValue::Text("Alice".to_string())));
-        assert_eq!(row1.get("order_id"), Some(&DataValue::Integer(101)));
+        assert_eq!(row1.get("left_table.id"), Some(&DataValue::Integer(1)));
+        assert_eq!(row1.get("left_table.name"), Some(&DataValue::Text("Alice".to_string())));
+        assert_eq!(row1.get("right_table.id"), Some(&DataValue::Integer(1)));
+        assert_eq!(row1.get("right_table.order_id"), Some(&DataValue::Integer(101)));
         
         let row2 = join_op.next().unwrap().unwrap();
-        assert_eq!(row2.get("id"), Some(&DataValue::Integer(2)));
-        assert_eq!(row2.get("name"), Some(&DataValue::Text("Bob".to_string())));
-        assert_eq!(row2.get("order_id"), Some(&DataValue::Integer(102)));
+        assert_eq!(row2.get("left_table.id"), Some(&DataValue::Integer(2)));
+        assert_eq!(row2.get("left_table.name"), Some(&DataValue::Text("Bob".to_string())));
+        assert_eq!(row2.get("right_table.id"), Some(&DataValue::Integer(2)));
+        assert_eq!(row2.get("right_table.order_id"), Some(&DataValue::Integer(102)));
         
         // No more joined rows
         assert!(join_op.next().unwrap().is_none());
@@ -319,6 +367,8 @@ mod tests {
             right_op.clone(),
             "id = id".to_string(),
             true, // is_left_join = true
+            "left_table".to_string(),
+            "right_table".to_string(),
         );
         
         // Initialize the operator
@@ -335,7 +385,7 @@ mod tests {
         
         // Verify all users are present
         let names: Vec<String> = results.iter()
-            .filter_map(|r| r.get("name"))
+            .filter_map(|r| r.get("left_table.name"))
             .filter_map(|v| match v {
                 DataValue::Text(s) => Some(s.clone()),
                 _ => None,
@@ -346,14 +396,15 @@ mod tests {
         assert!(names.contains(&"Bob".to_string()));
         assert!(names.contains(&"Charlie".to_string()));
         
-        // Verify matched users have order_id
+        // Verify matched users have order_id, and unmatched have None for right table columns
         for row in &results {
-            if let Some(DataValue::Text(name)) = row.get("name") {
-                if name == "Alice" || name == "Bob" {
-                    assert!(row.get("order_id").is_some());
-                } else if name == "Charlie" {
-                    // Charlie shouldn't have a matching order
-                    assert_eq!(row.get("order_id"), None);
+            if let Some(DataValue::Text(name_val)) = row.get("left_table.name") {
+                if name_val == "Alice" || name_val == "Bob" {
+                    assert!(row.get("right_table.order_id").is_some());
+                    assert!(row.get("right_table.id").is_some());
+                } else if name_val == "Charlie" {
+                    assert_eq!(row.get("right_table.id"), None, "right_table.id should be None for unmatched Charlie");
+                    assert_eq!(row.get("right_table.order_id"), None, "right_table.order_id should be None for unmatched Charlie");
                 }
             }
         }

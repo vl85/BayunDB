@@ -17,25 +17,29 @@ use crate::query::executor::result::QueryResult;
 
 /// Create a nested loop join operator
 pub fn create_nested_loop_join(
-    left: Arc<Mutex<dyn Operator>>,
-    right: Arc<Mutex<dyn Operator>>,
+    left: Arc<Mutex<dyn Operator + Send>>,
+    right: Arc<Mutex<dyn Operator + Send>>,
     condition: String,
     is_left_join: bool,
-) -> QueryResult<Arc<Mutex<dyn Operator>>> {
+    left_alias: String,
+    right_alias: String,
+) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
     Ok(Arc::new(Mutex::new(NestedLoopJoin::new(
-        left, right, condition, is_left_join
+        left, right, condition, is_left_join, left_alias, right_alias
     ))))
 }
 
 /// Create a hash join operator
 pub fn create_hash_join(
-    left: Arc<Mutex<dyn Operator>>,
-    right: Arc<Mutex<dyn Operator>>,
+    left: Arc<Mutex<dyn Operator + Send>>,
+    right: Arc<Mutex<dyn Operator + Send>>,
     condition: String,
     is_left_join: bool,
-) -> QueryResult<Arc<Mutex<dyn Operator>>> {
+    left_alias: String,
+    right_alias: String,
+) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
     Ok(Arc::new(Mutex::new(HashJoin::new(
-        left, right, condition, is_left_join
+        left, right, condition, is_left_join, left_alias, right_alias
     ))))
 }
 

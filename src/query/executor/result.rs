@@ -6,9 +6,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::cmp::{Ordering, Eq};
 use std::hash::{Hash, Hasher};
+use serde;
+use thiserror::Error;
 
 /// Possible data types for values in a row
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DataValue {
     Null,
     Integer(i64),
@@ -171,36 +173,29 @@ impl Row {
 }
 
 /// Represents query execution error
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum QueryError {
     /// Error from storage layer
+    #[error("Storage error: {0}")]
     StorageError(String),
     /// Error during query execution
+    #[error("Execution error: {0}")]
     ExecutionError(String),
     /// Error in data type conversion
+    #[error("Type error: {0}")]
     TypeError(String),
     /// Error during query planning phase
+    #[error("Planning error: {0}")]
     PlanningError(String),
     /// Table not found
+    #[error("Table not found: {0}")]
     TableNotFound(String),
     /// Column not found
+    #[error("Column not found: {0}")]
     ColumnNotFound(String),
     /// Invalid operation
+    #[error("Invalid operation: {0}")]
     InvalidOperation(String),
-}
-
-impl fmt::Display for QueryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            QueryError::StorageError(msg) => write!(f, "Storage error: {}", msg),
-            QueryError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
-            QueryError::TypeError(msg) => write!(f, "Type error: {}", msg),
-            QueryError::PlanningError(msg) => write!(f, "Planning error: {}", msg),
-            QueryError::TableNotFound(table) => write!(f, "Table not found: {}", table),
-            QueryError::ColumnNotFound(col) => write!(f, "Column not found: {}", col),
-            QueryError::InvalidOperation(msg) => write!(f, "Invalid operation: {}", msg),
-        }
-    }
 }
 
 /// Result type for query operations

@@ -87,6 +87,10 @@ path = "tests/integration/schema_management_test.rs"
 name = "debug_validation"
 path = "examples/debug_validation.rs"
 
+[[example]]
+name = "execution_engine_debug"
+path = "examples/execution_engine_debug.rs"
+
 [dependencies]
 thiserror = "1.0"
 anyhow = "1.0"

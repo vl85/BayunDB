@@ -334,4 +334,14 @@ impl PageManager {
         
         Ok(())
     }
+
+    pub fn get_record_count(&self, page: &Page) -> Result<u32, PageError> {
+        let header = self.get_header(page);
+        Ok(header.record_count)
+    }
+
+    pub fn get_next_page_id(&self, page: &Page) -> Result<Option<u32>, PageError> {
+        let header = self.get_header(page);
+        Ok(header.next_page_id)
+    }
 } 

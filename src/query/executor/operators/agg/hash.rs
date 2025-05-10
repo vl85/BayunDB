@@ -365,7 +365,7 @@ impl Group {
 /// HashAggregateOperator performs grouping and aggregation using a hash table
 pub struct HashAggregateOperator {
     // Input operator
-    input: Arc<Mutex<dyn Operator>>,
+    input: Arc<Mutex<dyn Operator + Send>>,
     // Group by column references
     group_by_columns: Vec<String>,
     // Aggregate expressions to compute
@@ -491,6 +491,36 @@ impl Operator for HashAggregateOperator {
 }
 
 impl HashAggregateOperator {
+    /// Create a new hash aggregate operator
+    pub fn new(
+        input: Arc<Mutex<dyn Operator + Send>>,
+        group_by_columns: Vec<String>,
+        aggregate_expressions: Vec<String>,
+        having: Option<String>
+    ) -> Self {
+        // Initialize parsed_agg_expressions here, or handle error if parse fails
+        let parsed_agg_expressions: Vec<AggregateExpression> = aggregate_expressions
+            .iter()
+            .map(|expr_str| AggregateExpression::parse(expr_str))
+            .collect::<QueryResult<_>>() // Collect into QueryResult first
+            .unwrap_or_else(|err| {
+                // Log error or handle it appropriately, for now, create an empty Vec
+                eprintln!("Error parsing aggregate expressions: {:?}. Using empty aggregates.", err);
+                Vec::new()
+            });
+
+        HashAggregateOperator {
+            input,
+            group_by_columns,
+            aggregate_expressions, // Keep original strings if needed for other purposes
+            having,
+            initialized: false,
+            groups: HashMap::new(),
+            parsed_agg_expressions, // Store parsed expressions
+            result_iter: None,
+        }
+    }
+
     // Process all input and build the groups
     fn process_input(&mut self) -> QueryResult<()> {
         // Lock the input operator for processing
@@ -529,24 +559,18 @@ impl HashAggregateOperator {
 /// * `having` - Optional HAVING clause to filter groups
 /// 
 /// # Returns
-/// * A new HashAggregateOperator wrapped in an Arc<Mutex<dyn Operator>>
+/// * A new HashAggregateOperator wrapped in an Arc<Mutex<dyn Operator + Send>>
 pub fn create_hash_aggregate(
-    input: Arc<Mutex<dyn Operator>>,
+    input: Arc<Mutex<dyn Operator + Send>>,
     group_by_columns: Vec<String>,
     aggregate_expressions: Vec<String>,
     having: Option<String>
-) -> QueryResult<Arc<Mutex<dyn Operator>>> {
-    // Create the operator
-    let operator = HashAggregateOperator {
-        input,
-        group_by_columns,
-        aggregate_expressions,
-        having,
-        initialized: false,
-        groups: HashMap::new(),
-        parsed_agg_expressions: Vec::new(),
-        result_iter: None,
-    };
-    
-    Ok(Arc::new(Mutex::new(operator)))
+) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
+    let op = HashAggregateOperator::new(
+        input, 
+        group_by_columns, 
+        aggregate_expressions, 
+        having
+    );
+    Ok(Arc::new(Mutex::new(op)))
 } 

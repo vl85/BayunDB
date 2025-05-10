@@ -113,6 +113,10 @@ impl Schema {
     pub fn get_table(&self, table_name: &str) -> Option<Table> {
         self.tables.get(table_name).cloned()
     }
+
+    pub fn get_table_mut(&mut self, table_name: &str) -> Option<&mut Table> {
+        self.tables.get_mut(table_name)
+    }
     
     /// Get all tables in this schema
     pub fn tables(&self) -> Vec<Table> {

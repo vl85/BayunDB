@@ -2,7 +2,8 @@ use anyhow::{Result, anyhow};
 use bayundb::query::parser::parse;
 use bayundb::query::parser::ast::Statement;
 use bayundb::query::planner::logical::{self, LogicalPlan};
-use bayundb::query::planner::physical::{self, PhysicalPlan};
+use bayundb::query::planner::{self as planner, PhysicalPlan};
+use bayundb::query::planner::physical_optimizer::PhysicalOptimizer;
 
 #[test]
 fn test_logical_plan_generation() -> Result<()> {
@@ -56,7 +57,7 @@ fn test_physical_plan_generation() -> Result<()> {
         let logical_plan = logical::build_logical_plan(&select);
         
         // Convert to physical plan
-        let physical_plan = physical::create_physical_plan(&logical_plan);
+        let physical_plan = planner::physical::create_physical_plan(&logical_plan);
         let physical_plan_for_opt = physical_plan.clone();
         
         // Verify physical plan structure (should be Project -> Filter -> SeqScan)
@@ -83,7 +84,8 @@ fn test_physical_plan_generation() -> Result<()> {
         }
         
         // Test adding materialization hints
-        let optimized_plan = physical::add_materialization(physical_plan_for_opt);
+        let optimizer = PhysicalOptimizer::new();
+        let optimized_plan = optimizer.optimize(physical_plan_for_opt);
         assert!(format!("{:?}", optimized_plan).contains("Project"));
     } else {
         panic!("Expected SELECT statement");

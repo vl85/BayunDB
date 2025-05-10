@@ -10,7 +10,7 @@ use crate::query::executor::result::{Row, QueryResult, QueryError};
 /// Projection operator that selects specific columns from input rows
 pub struct ProjectionOperator {
     /// The input operator
-    input: Arc<Mutex<dyn Operator>>,
+    input: Arc<Mutex<dyn Operator + Send>>,
     /// The columns to project
     columns: Vec<String>,
     /// Whether the operator is initialized
@@ -19,7 +19,7 @@ pub struct ProjectionOperator {
 
 impl ProjectionOperator {
     /// Create a new projection operator
-    pub fn new(input: Arc<Mutex<dyn Operator>>, columns: Vec<String>) -> Self {
+    pub fn new(input: Arc<Mutex<dyn Operator + Send>>, columns: Vec<String>) -> Self {
         ProjectionOperator {
             input,
             columns,
@@ -99,7 +99,10 @@ impl Operator for ProjectionOperator {
 }
 
 /// Create a projection operator
-pub fn create_projection(input: Arc<Mutex<dyn Operator>>, columns: Vec<String>) -> QueryResult<Arc<Mutex<dyn Operator>>> {
+pub fn create_projection(
+    input: Arc<Mutex<dyn Operator + Send>>,
+    columns: Vec<String>
+) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
     let projection = ProjectionOperator::new(input, columns);
     Ok(Arc::new(Mutex::new(projection)))
 }
