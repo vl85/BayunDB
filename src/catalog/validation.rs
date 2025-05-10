@@ -260,43 +260,55 @@ impl TypeValidator {
             },
             
             Expression::Aggregate { function, arg } => {
-                // Just return basic types for aggregate functions
-                // In a real implementation, would need to validate arg type compatibility
                 match function {
+                    // COUNT always returns INTEGER
                     crate::query::parser::ast::AggregateFunction::Count => Ok(DataType::Integer),
-                    crate::query::parser::ast::AggregateFunction::Sum => {
-                        // Check the argument's type if provided
-                        if let Some(arg_expr) = arg {
-                            let arg_type = Self::get_expression_type(arg_expr, table)?;
-                            match arg_type {
-                                DataType::Integer => Ok(DataType::Integer),
-                                DataType::Float => Ok(DataType::Float),
-                                _ => Err(ValidationError::TypeMismatch { 
-                                    expected: "numeric type".to_string(), 
-                                    actual: format!("{:?}", arg_type) 
-                                }),
-                            }
-                        } else {
-                            // Without an argument, default to Integer
-                            Ok(DataType::Integer)
-                        }
-                    },
-                    crate::query::parser::ast::AggregateFunction::Avg => Ok(DataType::Float),
-                    crate::query::parser::ast::AggregateFunction::Min | crate::query::parser::ast::AggregateFunction::Max => {
-                        // Type depends on the argument
+                    
+                    // SUM, AVG, MIN, MAX return the type of their argument
+                    _ => {
                         if let Some(arg_expr) = arg {
                             Self::get_expression_type(arg_expr, table)
                         } else {
-                            // Without an argument, can't determine
+                            // This case should not occur for SUM, AVG, MIN, MAX if parser is correct
+                            // as they require an argument. COUNT(*) is handled above.
                             Err(ValidationError::InvalidOperation(
                                 format!("{:?}", function),
-                                "missing argument".to_string(),
+                                "requires an argument".to_string(),
                                 "".to_string()
                             ))
                         }
-                    },
+                    }
                 }
             },
+            Expression::UnaryOp { op, expr } => {
+                let expr_type = Self::get_expression_type(expr, table)?;
+                match op {
+                    crate::query::parser::ast::UnaryOperator::Minus => {
+                        // Unary minus is valid for Integer and Float
+                        if expr_type == DataType::Integer || expr_type == DataType::Float {
+                            Ok(expr_type)
+                        } else {
+                            Err(ValidationError::IncompatibleTypes(
+                                "-".to_string(), 
+                                format!("{:?}", expr_type), 
+                                "(unary minus operand)".to_string()
+                            ))
+                        }
+                    }
+                    crate::query::parser::ast::UnaryOperator::Not => {
+                        // Unary NOT is valid for Boolean
+                        if expr_type == DataType::Boolean {
+                            Ok(DataType::Boolean)
+                        } else {
+                            Err(ValidationError::IncompatibleTypes(
+                                "NOT".to_string(), 
+                                format!("{:?}", expr_type), 
+                                "(unary NOT operand)".to_string()
+                            ))
+                        }
+                    }
+                }
+            }
         }
     }
     

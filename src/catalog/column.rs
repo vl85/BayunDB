@@ -113,4 +113,10 @@ impl Column {
     pub(crate) fn rename(&mut self, new_name: &str) {
         self.name = new_name.to_string();
     }
+
+    /// Set the data type of the column
+    /// This is typically used during ALTER TABLE operations.
+    pub(crate) fn set_data_type(&mut self, new_type: DataType) {
+        self.data_type = new_type;
+    }
 } 

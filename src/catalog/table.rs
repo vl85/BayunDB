@@ -178,4 +178,19 @@ impl Table {
         self.column_map.insert(new_name.to_string(), idx);
         Ok(())
     }
+
+    /// Alter the data type of a column
+    pub(crate) fn alter_column_type(&mut self, column_name: &str, new_type: super::schema::DataType) -> Result<(), String> {
+        if let Some(&idx) = self.column_map.get(column_name) {
+            if let Some(col) = self.columns.get_mut(idx) {
+                col.set_data_type(new_type);
+                Ok(())
+            } else {
+                // This case should theoretically not happen if column_map is consistent with columns vec
+                Err(format!("Internal catalog error: Column index {} for '{}' out of bounds.", idx, column_name))
+            }
+        } else {
+            Err(format!("Column '{}' not found in table '{}' for ALTER COLUMN TYPE.", column_name, self.name))
+        }
+    }
 } 

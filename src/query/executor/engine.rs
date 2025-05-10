@@ -11,17 +11,18 @@ use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageManager;
 use crate::storage::page::PageError;
 use crate::query::executor::result::{QueryResult, QueryError, QueryResultSet, DataValue, Row};
-use crate::query::parser::ast::{Statement, SelectStatement, Expression, CreateStatement, InsertStatement, UpdateStatement, DeleteStatement, Value, Operator, ColumnDef};
+use crate::query::parser::ast::{Statement, SelectStatement, Expression, CreateStatement, InsertStatement, UpdateStatement, DeleteStatement, Value, Operator, ColumnDef, AlterTableOperation, AlterTableStatement, UnaryOperator}; // Added UnaryOperator etc.
 use crate::query::parser::parse;
 use crate::query::planner::{Planner, PhysicalPlan};
 use crate::query::planner::operator_builder::OperatorBuilder;
 use crate::catalog::Catalog;
-use crate::catalog::{Table, Column};
+use crate::catalog::{Table, Column}; // Assuming Column is also used directly, if not remove
 use bincode;
 use crate::transaction::concurrency::transaction_manager::TransactionManager;
 use crate::transaction::IsolationLevel;
 use crate::common::types::{Rid, Lsn};
 use crate::common::types::PagePtr;
+use crate::query::executor::result::convert_data_value; // Ensure this import is present for ALTER COLUMN TYPE
 
 // Helper function to convert ast::DataType to catalog::schema::DataType (Workaround)
 fn helper_ast_dt_to_catalog_dt(ast_dt: &crate::query::parser::ast::DataType) -> QueryResult<crate::catalog::schema::DataType> {
@@ -99,6 +100,9 @@ impl ExecutionEngine {
                     }
                     crate::query::parser::ast::AlterTableOperation::RenameColumn { old_name, new_name } => {
                         self.execute_alter_rename_column(table_name, old_name, new_name)
+                    }
+                    crate::query::parser::ast::AlterTableOperation::AlterColumnType { column_name, new_type } => {
+                        self.execute_alter_column_type(table_name, column_name, new_type)
                     }
                 }
             }
@@ -837,30 +841,32 @@ impl ExecutionEngine {
     }
 
     fn expr_to_datavalue(&self, expr: &Expression, table_def: &Table, col_name_hint: Option<&String>) -> QueryResult<DataValue> {
+        // Determine target_ast_type early for use in multiple arms
+        let target_ast_type: Option<crate::query::parser::ast::DataType> = col_name_hint.and_then(|name| {
+            table_def.get_column(name).and_then(|col| convert_catalog_dt_to_ast_dt(col.data_type()))
+        });
+
         match expr {
             Expression::Literal(value_ast) => {
-                let target_ast_type: Option<crate::query::parser::ast::DataType> = col_name_hint.and_then(|name| {
-                    table_def.get_column(name).and_then(|col| convert_catalog_dt_to_ast_dt(col.data_type()))
-                });
-
+                // The target_ast_type is now available from the function scope
                 match value_ast {
                     crate::query::parser::ast::Value::Null => Ok(DataValue::Null),
                     crate::query::parser::ast::Value::Integer(i) => {
-                        match target_ast_type {
+                        match target_ast_type { // Use the scoped target_ast_type
                             Some(crate::query::parser::ast::DataType::Float) => Ok(DataValue::Float(*i as f64)),
                             Some(crate::query::parser::ast::DataType::Integer) | None => Ok(DataValue::Integer(*i)),
                             Some(other_type) => Err(QueryError::ExecutionError(format!("Cannot cast integer to {:?}", other_type))),
                         }
                     },
                     crate::query::parser::ast::Value::Float(f) => {
-                         match target_ast_type {
-                            Some(crate::query::parser::ast::DataType::Integer) => Ok(DataValue::Integer(*f as i64)), // Potential precision loss, consider if this is desired
+                         match target_ast_type { // Use the scoped target_ast_type
+                            Some(crate::query::parser::ast::DataType::Integer) => Ok(DataValue::Integer(*f as i64)),
                             Some(crate::query::parser::ast::DataType::Float) | None => Ok(DataValue::Float(*f)),
                             Some(other_type) => Err(QueryError::ExecutionError(format!("Cannot cast float to {:?}", other_type))),
                         }
                     },
                     crate::query::parser::ast::Value::String(s) => {
-                        match target_ast_type {
+                        match target_ast_type { // Use the scoped target_ast_type
                             Some(crate::query::parser::ast::DataType::Boolean) => {
                                 if s.eq_ignore_ascii_case("true") { Ok(DataValue::Boolean(true)) }
                                 else if s.eq_ignore_ascii_case("false") { Ok(DataValue::Boolean(false)) }
@@ -875,11 +881,10 @@ impl ExecutionEngine {
                             Some(crate::query::parser::ast::DataType::Text) | None => Ok(DataValue::Text(s.clone())),
                             Some(crate::query::parser::ast::DataType::Date) => Err(QueryError::ExecutionError("Date type conversion from string not yet implemented".to_string())),
                             Some(crate::query::parser::ast::DataType::Timestamp) => Err(QueryError::ExecutionError("Timestamp type conversion from string not yet implemented".to_string())),
-                            // The Some(other_type) was here and was deemed unreachable
                         }
                     },
                     crate::query::parser::ast::Value::Boolean(b) => {
-                        match target_ast_type {
+                        match target_ast_type { // Use the scoped target_ast_type
                             Some(crate::query::parser::ast::DataType::Boolean) | None => Ok(DataValue::Boolean(*b)),
                             Some(crate::query::parser::ast::DataType::Text) => Ok(DataValue::Text(b.to_string())),
                             Some(other_type) => Err(QueryError::ExecutionError(format!("Cannot cast boolean to {:?}", other_type))),
@@ -887,7 +892,38 @@ impl ExecutionEngine {
                     }
                 }
             }
-            _ => Err(QueryError::ExecutionError("INSERT VALUES can only contain literals for now.".to_string())),
+            Expression::UnaryOp { op, expr: inner_expr } => {
+                // Handle simple case: -NumericLiteral for INSERT VALUES
+                // The target_ast_type is available from the function scope
+                if let crate::query::parser::ast::UnaryOperator::Minus = op {
+                    if let Expression::Literal(literal_val) = &**inner_expr {
+                        match literal_val {
+                            crate::query::parser::ast::Value::Integer(i) => {
+                                let negated_val = -*i;
+                                match target_ast_type { // Use the scoped target_ast_type
+                                    Some(crate::query::parser::ast::DataType::Float) => Ok(DataValue::Float(negated_val as f64)),
+                                    Some(crate::query::parser::ast::DataType::Integer) | None => Ok(DataValue::Integer(negated_val)),
+                                    Some(other_type) => Err(QueryError::ExecutionError(format!("Cannot cast negative integer to {:?}", other_type))),
+                                }
+                            }
+                            crate::query::parser::ast::Value::Float(f) => {
+                                let negated_val = -*f;
+                                match target_ast_type { // Use the scoped target_ast_type
+                                    Some(crate::query::parser::ast::DataType::Integer) => Ok(DataValue::Integer(negated_val as i64)),
+                                    Some(crate::query::parser::ast::DataType::Float) | None => Ok(DataValue::Float(negated_val)),
+                                    Some(other_type) => Err(QueryError::ExecutionError(format!("Cannot cast negative float to {:?}", other_type))),
+                                }
+                            }
+                            _ => Err(QueryError::ExecutionError("Unary minus in INSERT VALUES only supported for numeric literals.".to_string())),
+                        }
+                    } else {
+                        Err(QueryError::ExecutionError("Unary minus in INSERT VALUES only supported for expressions evaluating to numeric literals.".to_string()))
+                    }
+                } else {
+                    Err(QueryError::ExecutionError("Only unary minus on literals supported in INSERT VALUES for now.".to_string()))
+                }
+            }
+            _ => Err(QueryError::ExecutionError("INSERT VALUES can only contain literals or simple negated numeric literals for now.".to_string())),
         }
     }
 
@@ -1421,6 +1457,127 @@ impl ExecutionEngine {
         let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
         let mut row = Row::new();
         row.set("status".to_string(), DataValue::Text("Column renamed".to_string()));
+        result_set.add_row(row);
+        Ok(result_set)
+    }
+
+    fn execute_alter_column_type(&self, table_name: &str, column_name: &str, new_ast_data_type: &crate::query::parser::ast::DataType) -> QueryResult<QueryResultSet> {
+        let old_table_schema;
+        let first_page_id;
+        let column_index_to_alter;
+        let target_catalog_data_type;
+
+        {
+            let catalog_read_guard = self.catalog.read().map_err(|_|
+                QueryError::ExecutionError("Failed to acquire catalog read lock for ALTER COLUMN TYPE pre-check".to_string()))?;
+            let table = catalog_read_guard.get_table(table_name)
+                .ok_or_else(|| QueryError::TableNotFound(table_name.to_string()))?;
+            
+            old_table_schema = table.clone(); // Clone the schema *before* any catalog changes
+            first_page_id = table.first_page_id();
+            column_index_to_alter = table.columns().iter().position(|c| c.name() == column_name)
+                .ok_or_else(|| QueryError::ColumnNotFound(format!("Column '{}' not found in table '{}' for ALTER COLUMN TYPE.", column_name, table_name)))?;
+            
+            target_catalog_data_type = helper_ast_dt_to_catalog_dt(new_ast_data_type)?;
+        }
+
+        // Data Migration Phase
+        if let Some(pid) = first_page_id {
+            let mut rids_to_migrate: Vec<Rid> = Vec::new();
+            let mut current_scan_page_id = Some(pid);
+
+            // 1. Collect all RIDs
+            while let Some(page_id_val) = current_scan_page_id {
+                let page_arc = self.buffer_pool.fetch_page(page_id_val)
+                    .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error fetching page {} for RID collection: {}", page_id_val, e)))?;
+                let page_read_guard = page_arc.read();
+                let record_count = self.page_manager.get_record_count(&page_read_guard)
+                    .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error getting record count for page {}: {}", page_id_val, e)))?;
+                
+                for slot_num in 0..record_count {
+                    let temp_rid = Rid::new(page_id_val, slot_num);
+                    // Check if record exists (not deleted) before adding to migration list
+                    if self.page_manager.get_record(&page_read_guard, temp_rid).is_ok() {
+                        rids_to_migrate.push(temp_rid);
+                    }
+                }
+                current_scan_page_id = self.page_manager.get_next_page_id(&page_read_guard)
+                    .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error getting next page ID from {}: {}", page_id_val, e)))?;
+                drop(page_read_guard);
+                self.buffer_pool.unpin_page(page_id_val, false)
+                    .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error unpinning page {} after RID collection: {}", page_id_val, e)))?;
+            }
+
+            // 2. Iterate through RIDs, attempt conversion, and update records
+            for rid in rids_to_migrate {
+                let original_data_bytes = {
+                    let page_arc_read = self.buffer_pool.fetch_page(rid.page_id)
+                        .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error fetching page {} for RID {:?} read: {}", rid.page_id, rid, e)))?;
+                    let page_read_guard = page_arc_read.read();
+                    let bytes = match self.page_manager.get_record(&page_read_guard, rid) {
+                        Ok(b) => b,
+                        Err(PageError::RecordNotFound) => {
+                            drop(page_read_guard);
+                            self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e_unpin| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error unpinning page {} after RID {:?} not found: {}", rid.page_id, rid, e_unpin)))?;
+                            continue; // Skip if record was deleted in the meantime (should be rare without concurrency control here)
+                        }
+                        Err(e) => return Err(QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error getting record for RID {:?}: {}", rid, e))),
+                    };
+                    drop(page_read_guard);
+                    self.buffer_pool.unpin_page(rid.page_id, false).map_err(|e_unpin| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error unpinning page {} after RID {:?} read: {}", rid.page_id, rid, e_unpin)))?;
+                    bytes
+                };
+
+                let mut deserialized_row_values: Vec<DataValue> = bincode::deserialize(&original_data_bytes)
+                    .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Failed to deserialize row (len {}) for RID {:?} using old schema ({} cols): {}", original_data_bytes.len(), rid, old_table_schema.columns().len(), e)))?;
+
+                if column_index_to_alter >= deserialized_row_values.len() {
+                    return Err(QueryError::ExecutionError(format!(
+                        "ALTER TYPE Data migration: Column index {} is out of bounds for deserialized row (len {}) for RID {:?}. Old schema had {} columns.",
+                        column_index_to_alter, deserialized_row_values.len(), rid, old_table_schema.columns().len()
+                    )));
+                }
+
+                let original_value = &deserialized_row_values[column_index_to_alter];
+                // Need to ensure convert_data_value is in scope here.
+                // It should be if it was added to `src/query/executor/result.rs` and imported here.
+                let converted_value = crate::query::executor::result::convert_data_value(original_value, &target_catalog_data_type)
+                    .map_err(|e| QueryError::TypeError(format!(
+                        "Failed to convert value '{}' for column '{}' (RID {:?}) to new type '{}': {}",
+                        original_value, column_name, rid, new_ast_data_type, e
+                    )))?;
+                
+                deserialized_row_values[column_index_to_alter] = converted_value;
+
+                let updated_data_bytes = bincode::serialize(&deserialized_row_values)
+                    .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Failed to serialize migrated row for RID {:?}: {}", rid, e)))?;
+
+                { // Scope for page write lock
+                    let page_arc_write = self.buffer_pool.fetch_page(rid.page_id)
+                        .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error fetching page {} for RID {:?} write: {}", rid.page_id, rid, e)))?;
+                    let mut page_write_guard = page_arc_write.write();
+                    // TODO: Add WAL logging for this update if transactions are involved here.
+                    self.page_manager.update_record(&mut page_write_guard, rid, &updated_data_bytes)
+                        .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Failed to update record for RID {:?}: {}", rid, e)))?;
+                    drop(page_write_guard);
+                    self.buffer_pool.unpin_page(rid.page_id, true) // Mark page as dirty
+                        .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Error unpinning page {} (dirty) after RID {:?} write: {}", rid.page_id, rid, e)))?;
+                }
+            }
+        }
+
+        // Catalog Update Phase (only if data migration succeeded or was not needed)
+        {
+            let catalog_write_guard = self.catalog.write().map_err(|_|
+                QueryError::ExecutionError("Failed to acquire catalog write lock for ALTER COLUMN TYPE commit".to_string()))?;
+            catalog_write_guard.alter_table_alter_column_type(table_name, column_name, new_ast_data_type)
+                .map_err(|e| QueryError::ExecutionError(format!("Failed to alter column type in catalog post-migration: {}", e)))?;
+        }
+
+        let message = format!("Table '{}' altered: column '{}' type changed to {}. Data migration completed.", table_name, column_name, new_ast_data_type);
+        let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
+        let mut row = Row::new();
+        row.set("status".to_string(), DataValue::Text(message));
         result_set.add_row(row);
         Ok(result_set)
     }

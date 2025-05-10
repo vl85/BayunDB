@@ -335,6 +335,67 @@ impl QueryResultSet {
     }
 }
 
+/// Attempts to convert a DataValue to a target catalog DataType.
+pub fn convert_data_value(
+    value: &DataValue, 
+    target_catalog_type: &crate::catalog::schema::DataType
+) -> QueryResult<DataValue> {
+    match target_catalog_type {
+        crate::catalog::schema::DataType::Integer => match value {
+            DataValue::Null => Ok(DataValue::Null),
+            DataValue::Integer(i) => Ok(DataValue::Integer(*i)),
+            DataValue::Float(f) => Ok(DataValue::Integer(*f as i64)), // Truncation
+            DataValue::Text(s) => s.parse::<i64>()
+                .map(DataValue::Integer)
+                .map_err(|e| QueryError::TypeError(format!("Cannot convert Text '{}' to Integer: {}", s, e))),
+            DataValue::Boolean(b) => Ok(DataValue::Integer(if *b { 1 } else { 0 })),
+        },
+        crate::catalog::schema::DataType::Float => match value {
+            DataValue::Null => Ok(DataValue::Null),
+            DataValue::Integer(i) => Ok(DataValue::Float(*i as f64)),
+            DataValue::Float(f) => Ok(DataValue::Float(*f)),
+            DataValue::Text(s) => s.parse::<f64>()
+                .map(DataValue::Float)
+                .map_err(|e| QueryError::TypeError(format!("Cannot convert Text '{}' to Float: {}", s, e))),
+            DataValue::Boolean(b) => Ok(DataValue::Float(if *b { 1.0 } else { 0.0 })),
+        },
+        crate::catalog::schema::DataType::Text => match value {
+            DataValue::Null => Ok(DataValue::Null),
+            DataValue::Integer(i) => Ok(DataValue::Text(i.to_string())),
+            DataValue::Float(f) => Ok(DataValue::Text(f.to_string())),
+            DataValue::Text(s) => Ok(DataValue::Text(s.clone())),
+            DataValue::Boolean(b) => Ok(DataValue::Text(b.to_string())),
+        },
+        crate::catalog::schema::DataType::Boolean => match value {
+            DataValue::Null => Ok(DataValue::Null),
+            DataValue::Integer(i) => Ok(DataValue::Boolean(*i != 0)),
+            DataValue::Float(f) => Ok(DataValue::Boolean(*f != 0.0)), // Consider precision for float to bool
+            DataValue::Text(s) => {
+                if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("t") || s.eq_ignore_ascii_case("1") {
+                    Ok(DataValue::Boolean(true))
+                } else if s.eq_ignore_ascii_case("false") || s.eq_ignore_ascii_case("f") || s.eq_ignore_ascii_case("0") {
+                    Ok(DataValue::Boolean(false))
+                } else {
+                    Err(QueryError::TypeError(format!("Cannot convert Text '{}' to Boolean", s)))
+                }
+            },
+            DataValue::Boolean(b) => Ok(DataValue::Boolean(*b)),
+        },
+        crate::catalog::schema::DataType::Date | crate::catalog::schema::DataType::Timestamp | crate::catalog::schema::DataType::Blob => {
+            // DataValue does not yet support these types directly.
+            // If the source is Null, it can be Null in the target.
+            if matches!(value, DataValue::Null) {
+                Ok(DataValue::Null)
+            } else {
+                 Err(QueryError::TypeError(format!(
+                    "Conversion from {:?} to catalog type {:?} is not supported by DataValue yet.", 
+                    value, target_catalog_type
+                )))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -176,67 +176,15 @@ impl OperatorBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::parser::ast::{Expression, ColumnReference, Operator as AstOperator, Value, AggregateFunction};
-    use std::path::PathBuf;
-    
-    // Mock operator for testing
-    struct MockOperator {
-        name: String,
-        next_returns: Vec<Option<String>>,
-        called_init: bool,
-        called_next: usize,
-        called_close: bool,
-    }
-    
-    impl MockOperator {
-        fn new(name: &str) -> Self {
-            MockOperator {
-                name: name.to_string(),
-                next_returns: vec![],
-                called_init: false,
-                called_next: 0,
-                called_close: false,
-            }
-        }
-        
-        fn with_next_returns(mut self, returns: Vec<Option<String>>) -> Self {
-            self.next_returns = returns;
-            self
-        }
-    }
-    
-    impl Operator for MockOperator {
-        fn init(&mut self) -> QueryResult<()> {
-            self.called_init = true;
-            Ok(())
-        }
-        
-        fn next(&mut self) -> QueryResult<Option<crate::query::executor::result::Row>> {
-            let result = if self.called_next < self.next_returns.len() {
-                match &self.next_returns[self.called_next] {
-                    Some(value) => {
-                        // Create a dummy row with the value
-                        let mut row = crate::query::executor::result::Row::new();
-                        row.set("value".to_string(), crate::query::executor::result::DataValue::Text(value.clone()));
-                        Some(row)
-                    }
-                    None => None,
-                }
-            } else {
-                None
-            };
-            
-            self.called_next += 1;
-            Ok(result)
-        }
-        
-        fn close(&mut self) -> QueryResult<()> {
-            self.called_close = true;
-            Ok(())
-        }
-    }
-    
-    // Helper function to create a buffer pool for testing
+    use crate::query::parser::ast::{
+        Expression, ColumnReference, Operator as AstOperator, Value, 
+        AggregateFunction
+    };
+    use crate::catalog::{Catalog};
+    use std::sync::{Arc, RwLock};
+    use crate::storage::buffer::BufferPoolManager;
+
+    // Helper to setup a basic catalog and buffer pool for testing operator builder
     fn create_test_buffer_pool() -> Arc<BufferPoolManager> {
         // Create a temporary file path
         let temp_path = std::env::temp_dir().join("test_db.db");
@@ -245,14 +193,7 @@ mod tests {
         // Create buffer pool
         Arc::new(BufferPoolManager::new(100, path_str).unwrap())
     }
-    
-    // Mock factory functions to override the real ones
-    fn setup_test_mocks() {
-        // In a real test setup, we would use a mocking framework
-        // or dependency injection to replace the operator factory functions
-        // For this example, we'll just assume the mock works
-    }
-    
+
     #[test]
     fn test_build_simple_scan() {
         // Create a test buffer pool

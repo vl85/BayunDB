@@ -182,3 +182,47 @@ mod alter_table_add_column_tests {
 // TODO: Add mod alter_table_drop_column_tests { ... }
 // TODO: Add mod alter_table_rename_column_tests { ... }
 // TODO: Add mod alter_table_general_error_tests { ... } 
+
+#[cfg(test)]
+mod alter_table_alter_column_type_tests {
+    use super::*;
+    use bayundb::query::executor::result::DataValue;
+
+    #[test]
+    fn test_alter_column_type_int_to_float() -> Result<()> {
+        let (engine, _temp_dir) = setup_test_db()?;
+
+        execute_query_assert_ok(&engine, "CREATE TABLE type_change_test (id INT, val INT);");
+        execute_query_assert_ok(&engine, "INSERT INTO type_change_test VALUES (1, 10);");
+        execute_query_assert_ok(&engine, "INSERT INTO type_change_test VALUES (2, -5);");
+        execute_query_assert_ok(&engine, "INSERT INTO type_change_test VALUES (3, 0);");
+
+        // Alter column 'val' from INT to FLOAT
+        execute_query_assert_ok(&engine, "ALTER TABLE type_change_test ALTER COLUMN val TYPE FLOAT;");
+
+        // Verify data conversion and schema
+        let result = execute_query_assert_ok(&engine, "SELECT id, val FROM type_change_test ORDER BY id;");
+        assert_eq!(result.columns(), vec!["id", "val"]);
+        let rows = result.rows();
+        assert_eq!(rows.len(), 3);
+
+        assert_eq!(rows[0].get("id"), Some(&DataValue::Integer(1)));
+        assert_eq!(rows[0].get("val"), Some(&DataValue::Float(10.0)));
+
+        assert_eq!(rows[1].get("id"), Some(&DataValue::Integer(2)));
+        assert_eq!(rows[1].get("val"), Some(&DataValue::Float(-5.0)));
+
+        assert_eq!(rows[2].get("id"), Some(&DataValue::Integer(3)));
+        assert_eq!(rows[2].get("val"), Some(&DataValue::Float(0.0)));
+
+        // Insert new data with float type
+        execute_query_assert_ok(&engine, "INSERT INTO type_change_test (id, val) VALUES (4, 123.45);");
+        let result_new = execute_query_assert_ok(&engine, "SELECT val FROM type_change_test WHERE id = 4;");
+        assert_eq!(result_new.rows()[0].get("val"), Some(&DataValue::Float(123.45)));
+
+        // Check catalog (conceptual - actual check might be more direct if catalog API allows type inspection easily)
+        // For now, relying on behavior of INSERT and SELECT with the new type.
+
+        Ok(())
+    }
+} 

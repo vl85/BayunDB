@@ -227,4 +227,35 @@ impl Catalog {
             Err(format!("Schema {} does not exist", schema_name))
         }
     }
+
+    /// ALTER TABLE: Alter the data type of a column in a table in the current schema
+    pub fn alter_table_alter_column_type(
+        &self, 
+        table_name: &str, 
+        column_name: &str, 
+        new_ast_data_type: &crate::query::parser::ast::DataType
+    ) -> Result<(), String> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let mut schemas_guard = self.schemas.write().unwrap();
+        
+        if let Some(schema) = schemas_guard.get_mut(&schema_name) {
+            if let Some(table) = schema.get_table_mut(table_name) {
+                // Convert AST DataType to catalog::DataType
+                let new_catalog_data_type = match new_ast_data_type {
+                    crate::query::parser::ast::DataType::Integer => schema::DataType::Integer,
+                    crate::query::parser::ast::DataType::Float => schema::DataType::Float,
+                    crate::query::parser::ast::DataType::Text => schema::DataType::Text,
+                    crate::query::parser::ast::DataType::Boolean => schema::DataType::Boolean,
+                    crate::query::parser::ast::DataType::Date => schema::DataType::Date,
+                    crate::query::parser::ast::DataType::Timestamp => schema::DataType::Timestamp,
+                    // Note: ast::DataType does not currently have Blob. If it's added, map it here.
+                };
+                table.alter_column_type(column_name, new_catalog_data_type)
+            } else {
+                Err(format!("Table '{}' does not exist in schema '{}' for ALTER COLUMN TYPE.", table_name, schema_name))
+            }
+        } else {
+            Err(format!("Schema '{}' does not exist for ALTER COLUMN TYPE.", schema_name))
+        }
+    }
 } 

@@ -38,20 +38,34 @@ fn parse_prefix_expression(parser: &mut Parser) -> ParseResult<Expression> {
         Some(token) => {
             let token_type = token.token_type.clone();
             match token_type {
+                TokenType::MINUS => { // Handle Unary Minus
+                    parser.next_token(); // Consume MINUS
+                    // Parse the operand with a high precedence for unary operators
+                    // Let's define a precedence for unary minus, e.g., higher than multiplication/division
+                    let operand = parse_expression(parser, get_operator_precedence(&TokenType::MINUS) + 1)?; // Or a specific UNARY_PRECEDENCE constant
+                    Ok(Expression::UnaryOp {
+                        op: UnaryOperator::Minus, 
+                        expr: Box::new(operand)
+                    })
+                }
+                // TokenType::NOT => { // Example for Unary Not, if supported
+                //     parser.next_token(); // Consume NOT
+                //     let operand = parse_expression(parser, UNARY_PRECEDENCE)?; // Define UNARY_PRECEDENCE
+                //     Ok(Expression::UnaryOp { op: UnaryOperator::Not, expr: Box::new(operand) })
+                // }
                 TokenType::INTEGER(val) => {
                     parser.next_token();
-                    Ok(Expression::Literal(Value::Integer(val)))
+                    Ok(Expression::Literal(Value::Integer(val))) // No negation here, handled by UnaryOp
                 },
                 TokenType::FLOAT(val) => {
                     parser.next_token();
-                    Ok(Expression::Literal(Value::Float(val)))
+                    Ok(Expression::Literal(Value::Float(val))) // No negation here, handled by UnaryOp
                 },
                 TokenType::STRING(val) => {
                     parser.next_token();
                     Ok(Expression::Literal(Value::String(val)))
                 },
                 TokenType::IDENTIFIER(val) => {
-                    // Check for boolean literals first
                     if val.eq_ignore_ascii_case("true") {
                         parser.next_token();
                         Ok(Expression::Literal(Value::Boolean(true)))
@@ -353,6 +367,77 @@ mod tests {
                 assert!(arg.is_some());
             },
             _ => panic!("Expected aggregate function"),
+        }
+    }
+    
+    #[test]
+    fn test_parse_negative_numbers_and_unary_minus() {
+        // Negative integer literal
+        let mut parser_neg_int = Parser::new("-42");
+        let expr_neg_int = parse_expression(&mut parser_neg_int, 0);
+        assert!(expr_neg_int.is_ok(), "Failed to parse -42: {:?}", expr_neg_int.err());
+        match expr_neg_int.unwrap() {
+            Expression::UnaryOp { op, expr } => {
+                assert_eq!(op, UnaryOperator::Minus);
+                match *expr {
+                    Expression::Literal(Value::Integer(val)) => assert_eq!(val, 42),
+                    _ => panic!("Expected integer literal for unary minus operand, got {:?}", expr),
+                }
+            }
+            _ => panic!("Expected UnaryOp for -42"),
+        }
+
+        // Negative float literal
+        let mut parser_neg_float = Parser::new("-3.14");
+        let expr_neg_float = parse_expression(&mut parser_neg_float, 0);
+        assert!(expr_neg_float.is_ok(), "Failed to parse -3.14: {:?}", expr_neg_float.err());
+        match expr_neg_float.unwrap() {
+            Expression::UnaryOp { op, expr } => {
+                assert_eq!(op, UnaryOperator::Minus);
+                match *expr {
+                    Expression::Literal(Value::Float(val)) => assert!((val - 3.14).abs() < f64::EPSILON),
+                    _ => panic!("Expected float literal for unary minus operand, got {:?}", expr),
+                }
+            }
+            _ => panic!("Expected UnaryOp for -3.14"),
+        }
+
+        // Unary minus with identifier
+        let mut parser_unary_ident = Parser::new("-my_column");
+        let expr_unary_ident = parse_expression(&mut parser_unary_ident, 0);
+        assert!(expr_unary_ident.is_ok(), "Failed to parse -my_column: {:?}", expr_unary_ident.err());
+        match expr_unary_ident.unwrap() {
+            Expression::UnaryOp { op, expr } => {
+                assert_eq!(op, UnaryOperator::Minus);
+                match *expr {
+                    Expression::Column(col_ref) => assert_eq!(col_ref.name, "my_column"),
+                    _ => panic!("Expected column reference for unary minus operand"),
+                }
+            }
+            _ => panic!("Expected UnaryOp for -my_column"),
+        }
+
+        // Unary minus with parenthesized expression
+        let mut parser_unary_paren = Parser::new("-(a + b)");
+        let expr_unary_paren = parse_expression(&mut parser_unary_paren, 0);
+        assert!(expr_unary_paren.is_ok(), "Failed to parse -(a + b): {:?}", expr_unary_paren.err());
+        match expr_unary_paren.unwrap() {
+            Expression::UnaryOp { op, expr: outer_expr } => {
+                assert_eq!(op, UnaryOperator::Minus);
+                match *outer_expr {
+                    Expression::BinaryOp { .. } => { /* Correct, it's a BinaryOp inside */ }
+                    _ => panic!("Expected BinaryOp for unary minus operand -(a+b)"),
+                }
+            }
+            _ => panic!("Expected UnaryOp for -(a + b)"),
+        }
+
+        // Ensure it doesn't break positive numbers
+        let mut parser_pos_int = Parser::new("123");
+        let expr_pos_int = parse_expression(&mut parser_pos_int, 0).unwrap();
+        match expr_pos_int {
+            Expression::Literal(Value::Integer(val)) => assert_eq!(val, 123),
+            _ => panic!("Expected positive integer literal"),
         }
     }
 } 

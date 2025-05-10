@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock};
 // crate::common::types::DataType was an erroneous addition and is ensured to be removed.
 #[allow(unused_imports)] // For AggregateFunction, which is used in tests but flagged by cargo build.
 use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, ColumnDef, AggregateFunction, AlterTableStatement};
-use crate::catalog::{Catalog, Table}; // Added Table for schema access
+use crate::catalog::{Catalog}; // Removed Table import
 // Statement is reported as unused by cargo build.
 // use crate::query::parser::ast::Statement;
 // use crate::query::parser::ast::AggregateFunction; // This was part of a combined import, now handled by commenting its usage in the line above.
@@ -244,7 +244,7 @@ pub fn build_logical_plan(stmt: &SelectStatement, catalog: Arc<RwLock<Catalog>>)
         table_name: base_table_ref.name.clone(),
         alias: base_table_ref.alias.clone(),
     };
-    let mut current_source_table_name_for_wildcard = base_table_ref.name.as_str();
+    let current_source_table_name_for_wildcard = base_table_ref.name.as_str();
 
     // Process JOIN clauses if any
     for join in &stmt.joins {

@@ -97,6 +97,22 @@ pub enum AggregateFunction {
     Max,
 }
 
+/// Unary operators
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOperator {
+    Minus,
+    Not, // For logical NOT, if we want to handle it as unary
+}
+
+impl fmt::Display for UnaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnaryOperator::Minus => write!(f, "-"),
+            UnaryOperator::Not => write!(f, "NOT"),
+        }
+    }
+}
+
 /// Expression in SQL
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
@@ -109,6 +125,11 @@ pub enum Expression {
         left: Box<Expression>,
         op: Operator,
         right: Box<Expression>,
+    },
+    /// Unary operation (e.g., -a, NOT b)
+    UnaryOp {
+        op: UnaryOperator,
+        expr: Box<Expression>,
     },
     /// Function call
     Function {
@@ -134,6 +155,7 @@ impl fmt::Display for Expression {
                 }
             }
             Expression::BinaryOp { left, op, right } => write!(f, "({} {} {})", left, op, right),
+            Expression::UnaryOp { op, expr } => write!(f, "({}{})", op, expr),
             Expression::Function { name, args } => {
                 let arg_list = args.iter().map(|arg| arg.to_string()).collect::<Vec<String>>().join(", ");
                 write!(f, "{}({})", name, arg_list)
@@ -314,6 +336,7 @@ pub enum AlterTableOperation {
     AddColumn(ColumnDef),
     DropColumn(String),
     RenameColumn { old_name: String, new_name: String },
+    AlterColumnType { column_name: String, new_type: DataType },
     // Extend with more operations as needed
 }
 
@@ -363,11 +386,10 @@ impl fmt::Display for AlterTableStatement {
 impl fmt::Display for AlterTableOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AlterTableOperation::AddColumn(col) => write!(f, "ADD COLUMN {} {}{}{}", col.name, col.data_type,
-                if !col.nullable { " NOT NULL" } else { "" },
-                if col.primary_key { " PRIMARY KEY" } else { "" }),
-            AlterTableOperation::DropColumn(name) => write!(f, "DROP COLUMN {}", name),
+            AlterTableOperation::AddColumn(col_def) => write!(f, "ADD COLUMN {}", col_def.name),
+            AlterTableOperation::DropColumn(col_name) => write!(f, "DROP COLUMN {}", col_name),
             AlterTableOperation::RenameColumn { old_name, new_name } => write!(f, "RENAME COLUMN {} TO {}", old_name, new_name),
+            AlterTableOperation::AlterColumnType { column_name, new_type } => write!(f, "ALTER COLUMN {} TYPE {}", column_name, new_type),
         }
     }
 }

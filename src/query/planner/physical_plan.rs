@@ -215,6 +215,13 @@ pub fn expression_to_predicate(expr: &Expression) -> String {
             
             format!("{}({})", name, args_str)
         },
+        Expression::UnaryOp { op, expr } => {
+            let expr_str = expression_to_predicate(expr);
+            match op {
+                crate::query::parser::ast::UnaryOperator::Minus => format!("-{}", expr_str),
+                crate::query::parser::ast::UnaryOperator::Not => format!("NOT {}", expr_str),
+            }
+        }
     }
 }
 

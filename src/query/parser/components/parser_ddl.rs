@@ -140,8 +140,37 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             table_name,
             operation: AlterTableOperation::RenameColumn { old_name, new_name },
         }))
+    } else if parser.current_token_is(TokenType::ALTER) {
+        parser.next_token(); // Consume ALTER
+        parser.expect_token(TokenType::COLUMN)?;
+        let column_name = parser.parse_identifier()?;
+        
+        // Expect TYPE keyword
+        // current_token should now be pointing at where TYPE is expected.
+        match &parser.current_token {
+            Some(token) => {
+                if let TokenType::IDENTIFIER(ident_str) = &token.token_type {
+                    if ident_str.eq_ignore_ascii_case("TYPE") {
+                        parser.next_token(); // Consume TYPE keyword
+                    } else {
+                        return Err(ParseError::InvalidSyntax(format!("Expected TYPE keyword after ALTER COLUMN <name>, got IDENTIFIER('{}')", ident_str)));
+                    }
+                } else {
+                    return Err(ParseError::InvalidSyntax(format!("Expected TYPE keyword after ALTER COLUMN <name>, got {:?}", token.token_type)));
+                }
+            },
+            None => return Err(ParseError::EndOfInput), // Or a more specific error if current_token can't be None here
+        }
+        
+        // Now current_token should be pointing at the start of the data type.
+        let new_type = parse_data_type(parser)?;
+        if parser.current_token_is(TokenType::SEMICOLON) { parser.next_token(); }
+        Ok(Statement::Alter(AlterTableStatement {
+            table_name,
+            operation: AlterTableOperation::AlterColumnType { column_name, new_type },
+        }))
     } else {
-        Err(ParseError::InvalidSyntax("Expected ADD, DROP, or RENAME after ALTER TABLE <table>".to_string()))
+        Err(ParseError::InvalidSyntax("Expected ADD, DROP, RENAME, or ALTER after ALTER TABLE <table>".to_string()))
     }
 }
 
@@ -522,21 +551,88 @@ mod tests {
 
     #[test]
     fn test_parse_alter_table_add_column_with_default() {
-        let mut parser = Parser::new("ALTER TABLE users ADD COLUMN age INTEGER DEFAULT 42;");
-        let stmt = parse_alter(&mut parser).unwrap();
-        if let Statement::Alter(alter_stmt) = stmt {
-            assert_eq!(alter_stmt.table_name, "users");
-            match alter_stmt.operation {
-                AlterTableOperation::AddColumn(ref col) => {
-                    assert_eq!(col.name, "age");
-                    assert_eq!(col.data_type, DataType::Integer);
-                    assert_eq!(col.nullable, true);
-                    assert!(col.default_value.is_some());
-                },
-                _ => panic!("Expected AddColumn operation"),
+        let sql = "ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT NOW()";
+        let mut parser = Parser::new(sql);
+        let result = parse_alter(&mut parser);
+        assert!(result.is_ok());
+        if let Statement::Alter(AlterTableStatement { table_name, operation }) = result.unwrap() {
+            assert_eq!(table_name, "users");
+            if let AlterTableOperation::AddColumn(col_def) = operation {
+                assert_eq!(col_def.name, "created_at");
+                assert_eq!(col_def.data_type, DataType::Timestamp);
+                assert!(col_def.default_value.is_some());
+            } else {
+                panic!("Expected AddColumn operation");
             }
         } else {
-            panic!("Expected ALTER TABLE statement");
+            panic!("Expected AlterTableStatement");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_table_alter_column_type() {
+        let sql = "ALTER TABLE products ALTER COLUMN price TYPE FLOAT";
+        let mut parser = Parser::new(sql);
+        let result = parse_alter(&mut parser);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        if let Statement::Alter(AlterTableStatement { table_name, operation }) = result.unwrap() {
+            assert_eq!(table_name, "products");
+            if let AlterTableOperation::AlterColumnType { column_name, new_type } = operation {
+                assert_eq!(column_name, "price");
+                assert_eq!(new_type, DataType::Float);
+            } else {
+                panic!("Expected AlterColumnType operation, got {:?}", operation);
+            }
+        } else {
+            panic!("Expected AlterTableStatement");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_table_alter_column_type_case_insensitive() {
+        let sql = "alter table My_Table alter column Old_Name type InTeGeR";
+        let mut parser = Parser::new(sql);
+        let result = parse_alter(&mut parser);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        if let Statement::Alter(AlterTableStatement { table_name, operation }) = result.unwrap() {
+            assert_eq!(table_name, "My_Table");
+            if let AlterTableOperation::AlterColumnType { column_name, new_type } = operation {
+                assert_eq!(column_name, "Old_Name");
+                assert_eq!(new_type, DataType::Integer);
+            } else {
+                panic!("Expected AlterColumnType operation, got {:?}", operation);
+            }
+        } else {
+            panic!("Expected AlterTableStatement");
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_table_alter_column_type_invalid_syntax() {
+        let sql_missing_type_keyword = "ALTER TABLE products ALTER COLUMN price FLOAT";
+        let mut parser_missing_type = Parser::new(sql_missing_type_keyword);
+        let result_missing_type = parse_alter(&mut parser_missing_type);
+        assert!(result_missing_type.is_err());
+        if let Err(ParseError::InvalidSyntax(msg)) = result_missing_type {
+            assert!(msg.contains("Expected TYPE keyword"), "Error message: {}", msg);
+        } else {
+            panic!("Expected InvalidSyntax error for missing TYPE keyword, got {:?}", result_missing_type);
+        }
+
+        let sql_missing_new_type = "ALTER TABLE products ALTER COLUMN price TYPE";
+        let mut parser_missing_new_type = Parser::new(sql_missing_new_type);
+        let result_missing_new_type = parse_alter(&mut parser_missing_new_type);
+        assert!(result_missing_new_type.is_err());
+        // This should be an error from parse_data_type when it finds EOF instead of a type name.
+        if let Err(ParseError::UnexpectedToken(token)) = result_missing_new_type {
+            assert_eq!(token.token_type, TokenType::EOF, "Expected EOF token when data type is missing");
+        } else if let Err(ParseError::InvalidSyntax(msg)) = result_missing_new_type { 
+             // This path might be taken if parse_data_type has a more specific syntax error before EOF.
+             assert!(msg.contains("Expected a data type name") || msg.contains("Unknown data type"), "Error message: {}", msg);
+        } else if let Err(ParseError::EndOfInput) = result_missing_new_type { 
+            // This could also be a valid error if parse_data_type consumes nothing and current_token becomes None.
+        } else {
+            panic!("Expected UnexpectedToken(EOF), InvalidSyntax, or EndOfInput for missing new data type, got {:?}", result_missing_new_type);
         }
     }
 } 

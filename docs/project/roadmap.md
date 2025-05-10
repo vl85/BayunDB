@@ -2,7 +2,7 @@
 
 This document outlines the planned features, improvements, and long-term vision for BayunDB.
 
-## Current Status (as of YYYY-MM-DD)
+## Current Status (as of 2024-07-28)
 
 *Replace this section with a summary of the current state of the project, key completed features, and any known major limitations.*
 
@@ -23,6 +23,7 @@ This document outlines the planned features, improvements, and long-term vision 
 *   Command-Line Interface (`bnql`)
 *   [x] Implement `ALTER TABLE` statements (ADD COLUMN, DROP COLUMN, RENAME COLUMN) in parser, catalog, and execution engine.
 *   [x] Integration tests for ALTER TABLE execution, including row-level data migration verification.
+*   [x] Phase 6: Comprehensive debugging and fixing of compiler warnings.
 
 ### Known Limitations:
 
