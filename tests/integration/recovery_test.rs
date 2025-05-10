@@ -1,6 +1,6 @@
 // Recovery Integration Tests
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::sync::Arc;
 use tempfile::TempDir;
 use std::collections::HashMap;
