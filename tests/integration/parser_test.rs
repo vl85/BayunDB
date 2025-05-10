@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use bayundb::query::parser::parse;
 use bayundb::query::parser::ast::{Statement, Expression, Operator};
-use bayundb::query::parser::components::ParseError;
 
 #[test]
 fn test_simple_select_query() -> Result<()> {
