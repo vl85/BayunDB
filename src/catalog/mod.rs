@@ -18,6 +18,7 @@ use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU32, Ordering};
+use crate::query::executor::result::QueryError;
 
 // Global catalog instance using a thread-safe lazy initialization
 static CATALOG_INSTANCE: Lazy<Arc<RwLock<Catalog>>> = Lazy::new(|| {
@@ -184,47 +185,83 @@ impl Catalog {
     }
 
     /// ALTER TABLE: Add a column to a table in the current schema
-    pub fn alter_table_add_column(&self, table_name: &str, column: Column) -> Result<(), String> {
+    pub fn alter_table_add_column(&self, table_name: &str, column: Column) -> Result<(), QueryError> {
         let schema_name = self.current_schema.read().unwrap().clone();
         let mut schemas_guard = self.schemas.write().unwrap();
         if let Some(schema) = schemas_guard.get_mut(&schema_name) {
             if let Some(table) = schema.get_table_mut(table_name) {
-                table.add_column(column)
+                // The Table::add_column method itself returns Result<(), String>
+                // We need to map this error if it occurs.
+                table.add_column(column).map_err(QueryError::CatalogError)
             } else {
-                Err(format!("Table {} does not exist in schema {}", table_name, schema_name))
+                Err(QueryError::TableNotFound(table_name.to_string()))
             }
         } else {
-            Err(format!("Schema {} does not exist", schema_name))
+            // This case should ideally not be reachable if current_schema is always valid.
+            Err(QueryError::SchemaNotFound(schema_name))
         }
     }
-
+    
     /// ALTER TABLE: Drop a column from a table in the current schema
-    pub fn alter_table_drop_column(&self, table_name: &str, column_name: &str) -> Result<(), String> {
+    pub fn alter_table_drop_column(&self, table_name: &str, column_name: &str) -> Result<(), QueryError> {
         let schema_name = self.current_schema.read().unwrap().clone();
         let mut schemas_guard = self.schemas.write().unwrap();
         if let Some(schema) = schemas_guard.get_mut(&schema_name) {
             if let Some(table) = schema.get_table_mut(table_name) {
-                table.drop_column(column_name)
+                // Check if this is the last column and if it's the one being dropped
+                if table.columns().len() == 1 {
+                    // Verify that the column_name to be dropped is indeed this last column.
+                    // table.columns().first() is safe because we checked len() == 1.
+                    if table.columns().first().unwrap().name() == column_name {
+                        return Err(QueryError::ExecutionError(format!(
+                            "Cannot drop the last column '{}' from table '{}'. Use DROP TABLE instead.",
+                            column_name, table_name
+                        )));
+                    }
+                    // If it's the last column but the name doesn't match,
+                    // table.drop_column() below will correctly return a ColumnNotFound error.
+                }
+
+                // Original logic: The Table::drop_column method returns Result<(), String>
+                // We need to map this error (e.g. ColumnNotFound from table.rs)
+                table.drop_column(column_name).map_err(|e_str| {
+                    if e_str.contains("not found") { // Heuristic, ideally Table::drop_column returns a typed error
+                        QueryError::ColumnNotFound(format!("Column '{}' not found in table '{}'", column_name, table_name))
+                    } else {
+                        // Pass through other errors from table.drop_column (e.g. if it had other internal errors)
+                        QueryError::CatalogError(e_str)
+                    }
+                })
             } else {
-                Err(format!("Table {} does not exist in schema {}", table_name, schema_name))
+                Err(QueryError::TableNotFound(table_name.to_string()))
             }
         } else {
-            Err(format!("Schema {} does not exist", schema_name))
+            Err(QueryError::SchemaNotFound(schema_name))
         }
     }
 
     /// ALTER TABLE: Rename a column in a table in the current schema
-    pub fn alter_table_rename_column(&self, table_name: &str, old_name: &str, new_name: &str) -> Result<(), String> {
+    pub fn alter_table_rename_column(&self, table_name: &str, old_name: &str, new_name: &str) -> Result<(), QueryError> {
         let schema_name = self.current_schema.read().unwrap().clone();
         let mut schemas_guard = self.schemas.write().unwrap();
         if let Some(schema) = schemas_guard.get_mut(&schema_name) {
             if let Some(table) = schema.get_table_mut(table_name) {
-                table.rename_column(old_name, new_name)
+                // The Table::rename_column method returns Result<(), String>
+                table.rename_column(old_name, new_name).map_err(|e_str| {
+                     if e_str.contains("not found") && e_str.contains(old_name) { // Heuristic
+                        QueryError::ColumnNotFound(format!("Column '{}' not found in table '{}'", old_name, table_name))
+                    } else if e_str.contains("already exists") && e_str.contains(new_name) {
+                        QueryError::DuplicateColumn(new_name.to_string())
+                    }
+                    else {
+                        QueryError::CatalogError(e_str)
+                    }
+                })
             } else {
-                Err(format!("Table {} does not exist in schema {}", table_name, schema_name))
+                Err(QueryError::TableNotFound(table_name.to_string()))
             }
         } else {
-            Err(format!("Schema {} does not exist", schema_name))
+            Err(QueryError::SchemaNotFound(schema_name))
         }
     }
 
@@ -234,7 +271,7 @@ impl Catalog {
         table_name: &str, 
         column_name: &str, 
         new_ast_data_type: &crate::query::parser::ast::DataType
-    ) -> Result<(), String> {
+    ) -> Result<(), QueryError> {
         let schema_name = self.current_schema.read().unwrap().clone();
         let mut schemas_guard = self.schemas.write().unwrap();
         
@@ -248,14 +285,44 @@ impl Catalog {
                     crate::query::parser::ast::DataType::Boolean => schema::DataType::Boolean,
                     crate::query::parser::ast::DataType::Date => schema::DataType::Date,
                     crate::query::parser::ast::DataType::Timestamp => schema::DataType::Timestamp,
-                    // Note: ast::DataType does not currently have Blob. If it's added, map it here.
+                    // Add other types as they are supported
                 };
-                table.alter_column_type(column_name, new_catalog_data_type)
+                // The Table::alter_column_type method returns Result<(), String>
+                table.alter_column_type(column_name, new_catalog_data_type).map_err(|e_str| {
+                    if e_str.contains("not found") { // Heuristic
+                        QueryError::ColumnNotFound(format!("Column '{}' not found in table '{}'", column_name, table_name))
+                    } else {
+                        QueryError::CatalogError(e_str)
+                    }
+                })
             } else {
-                Err(format!("Table '{}' does not exist in schema '{}' for ALTER COLUMN TYPE.", table_name, schema_name))
+                Err(QueryError::TableNotFound(table_name.to_string()))
             }
         } else {
-            Err(format!("Schema '{}' does not exist for ALTER COLUMN TYPE.", schema_name))
+            Err(QueryError::SchemaNotFound(schema_name))
         }
     }
+    
+    /// Helper to get a clone of a table's schema (columns) for use in the executor
+    /// This is useful when the executor needs schema info but shouldn't hold a lock on the catalog.
+    pub fn get_table_schema(&self, table_name: &str) -> Result<Table, QueryError> {
+        let schema_name = self.current_schema.read().unwrap().clone();
+        let schemas_guard = self.schemas.read().unwrap(); // Read lock is fine
+        
+        if let Some(schema) = schemas_guard.get(&schema_name) {
+            if let Some(table) = schema.get_table(table_name) {
+                Ok(table.clone()) // Clone the table definition
+            } else {
+                Err(QueryError::TableNotFound(table_name.to_string()))
+            }
+        } else {
+            Err(QueryError::SchemaNotFound(schema_name))
+        }
+    }
+}
+
+// Tests module
+#[cfg(test)]
+mod tests {
+// // ... existing code ...
 } 

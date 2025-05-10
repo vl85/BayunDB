@@ -153,8 +153,11 @@ impl PageManager {
         page.data[record_loc.offset as usize..(record_loc.offset as usize + data.len())]
             .copy_from_slice(data);
         
-        // If smaller, update record location
+        // If smaller, update record location and header's free space
         if new_size < record_loc.length {
+            let space_gained = record_loc.length - new_size;
+            let mut header = self.get_header(page); // Get a mutable copy of header
+
             let new_record_loc = RecordLocation {
                 offset: record_loc.offset,
                 length: new_size,
@@ -162,6 +165,11 @@ impl PageManager {
             
             let slot_bytes = new_record_loc.to_bytes();
             page.data[slot_pos..slot_pos+RECORD_OFFSET_SIZE].copy_from_slice(&slot_bytes);
+
+            // Update header for the gained space
+            header.free_space_size += space_gained;
+            let updated_header_bytes = header.to_bytes();
+            page.data[0..HEADER_SIZE].copy_from_slice(&updated_header_bytes); // Write header back
         }
         
         Ok(())

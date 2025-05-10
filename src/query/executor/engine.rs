@@ -11,7 +11,7 @@ use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::PageManager;
 use crate::storage::page::PageError;
 use crate::query::executor::result::{QueryResult, QueryError, QueryResultSet, DataValue, Row};
-use crate::query::parser::ast::{Statement, SelectStatement, Expression, CreateStatement, InsertStatement, UpdateStatement, DeleteStatement, Value, Operator, ColumnDef, AlterTableOperation, AlterTableStatement, UnaryOperator}; // Added UnaryOperator etc.
+use crate::query::parser::ast::{Statement, SelectStatement, Expression, CreateStatement, InsertStatement, UpdateStatement, DeleteStatement, Value, Operator}; // Added UnaryOperator etc.
 use crate::query::parser::parse;
 use crate::query::planner::{Planner, PhysicalPlan};
 use crate::query::planner::operator_builder::OperatorBuilder;
@@ -22,7 +22,7 @@ use crate::transaction::concurrency::transaction_manager::TransactionManager;
 use crate::transaction::IsolationLevel;
 use crate::common::types::{Rid, Lsn};
 use crate::common::types::PagePtr;
-use crate::query::executor::result::convert_data_value; // Ensure this import is present for ALTER COLUMN TYPE
+ // Ensure this import is present for ALTER COLUMN TYPE
 
 // Helper function to convert ast::DataType to catalog::schema::DataType (Workaround)
 fn helper_ast_dt_to_catalog_dt(ast_dt: &crate::query::parser::ast::DataType) -> QueryResult<crate::catalog::schema::DataType> {
@@ -1191,13 +1191,48 @@ impl ExecutionEngine {
         let column = crate::catalog::column::Column::from_column_def(col_def)
             .map_err(|e| QueryError::ExecutionError(format!("Failed to define column for ADD COLUMN: {}", e)))?;
         
+        // Pre-check: If column is NOT NULL and has no DEFAULT, table must be empty.
+        if !column.is_nullable() && column.get_default_ast_literal().is_none() {
+            let catalog_read_guard = self.catalog.read().map_err(|_| QueryError::ExecutionError("Failed to get catalog read lock for ADD COLUMN pre-check".to_string()))?;
+            let table_check = catalog_read_guard.get_table(table_name)
+                .ok_or_else(|| QueryError::TableNotFound(table_name.to_string()))?;
+
+            let mut table_has_rows = false;
+            if let Some(pid_check) = table_check.first_page_id() {
+                // Check if the first page actually contains records
+                let page_arc_check = self.buffer_pool.fetch_page(pid_check)
+                    .map_err(|e| QueryError::StorageError(format!("ADD_COL_PRECHECK: Failed to fetch page {} for emptiness check: {}", pid_check, e)))?;
+                
+                let has_records_on_first_page = { // Scope for page_read_guard_check
+                    let page_read_guard_check = page_arc_check.read();
+                    // Consider an error in get_record_count as potentially problematic (e.g. table might not be safely empty)
+                    // For now, treating error as "0 records" for simplicity of this check, but could be stricter.
+                    self.page_manager.get_record_count(&*page_read_guard_check).unwrap_or(0) > 0
+                };
+                
+                self.buffer_pool.unpin_page(pid_check, false)
+                    .map_err(|e| QueryError::StorageError(format!("ADD_COL_PRECHECK: Failed to unpin page {} after emptiness check: {}", pid_check, e)))?;
+
+                if has_records_on_first_page {
+                    table_has_rows = true;
+                }
+            }
+
+            if table_has_rows {
+                return Err(QueryError::ExecutionError(format!(
+                    "Cannot ADD non-nullable column '{}' without a DEFAULT value to non-empty table '{}'",
+                    col_def.name, // Using col_def.name to match test's expected AST name
+                    table_name
+                )));
+            }
+        }
+        
         let table_def_for_migration;
         let first_page_id;
         {
             // Removed `mut` from catalog_write_guard binding
             let catalog_write_guard = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
-            catalog_write_guard.alter_table_add_column(table_name, column.clone())
-                .map_err(|e| QueryError::ExecutionError(format!("Catalog error adding column: {}", e)))?;
+            catalog_write_guard.alter_table_add_column(table_name, column.clone())?;
             
             let temp_table_def = catalog_write_guard.get_table(table_name).ok_or_else(|| QueryError::TableNotFound(table_name.to_string()))?.clone();
             table_def_for_migration = temp_table_def;
@@ -1347,8 +1382,7 @@ impl ExecutionEngine {
 
         { // Scope for catalog write lock
             let catalog_write_guard = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock for DROP COLUMN".to_string()))?;
-            catalog_write_guard.alter_table_drop_column(table_name, col_name_to_drop)
-                .map_err(|e| QueryError::ExecutionError(format!("Catalog error dropping column: {}", e)))?;
+            catalog_write_guard.alter_table_drop_column(table_name, col_name_to_drop)?;
         }
 
         // Data Migration
@@ -1452,8 +1486,7 @@ impl ExecutionEngine {
 
     fn execute_alter_rename_column(&self, table_name: &str, old_name: &str, new_name: &str) -> QueryResult<QueryResultSet> {
         let catalog = self.catalog.write().map_err(|_| QueryError::ExecutionError("Failed to get catalog write lock".to_string()))?;
-        catalog.alter_table_rename_column(table_name, old_name, new_name)
-            .map_err(|e| QueryError::ExecutionError(format!("Failed to rename column: {}", e)))?;
+        catalog.alter_table_rename_column(table_name, old_name, new_name)?;
         let mut result_set = QueryResultSet::new(vec!["status".to_string()]);
         let mut row = Row::new();
         row.set("status".to_string(), DataValue::Text("Column renamed".to_string()));
@@ -1547,7 +1580,12 @@ impl ExecutionEngine {
                         original_value, column_name, rid, new_ast_data_type, e
                     )))?;
                 
-                deserialized_row_values[column_index_to_alter] = converted_value;
+                let cloned_original_value_for_debug = original_value.clone(); // Clone for debugging after mutation
+                deserialized_row_values[column_index_to_alter] = converted_value.clone(); 
+
+                // eprintln!("[ALTER_COLUMN_TYPE DEBUG] RID: {:?}, Col: '{}', Index: {}, OriginalVal: {:?}, TargetType: {:?}, ConvertedVal: {:?}, FullNewRow: {:?}", 
+                //     rid, column_name, column_index_to_alter, cloned_original_value_for_debug, target_catalog_data_type, converted_value, deserialized_row_values);
+                // std::io::stderr().flush().unwrap_or_default();
 
                 let updated_data_bytes = bincode::serialize(&deserialized_row_values)
                     .map_err(|e| QueryError::ExecutionError(format!("ALTER TYPE Data migration: Failed to serialize migrated row for RID {:?}: {}", rid, e)))?;
@@ -1570,8 +1608,7 @@ impl ExecutionEngine {
         {
             let catalog_write_guard = self.catalog.write().map_err(|_|
                 QueryError::ExecutionError("Failed to acquire catalog write lock for ALTER COLUMN TYPE commit".to_string()))?;
-            catalog_write_guard.alter_table_alter_column_type(table_name, column_name, new_ast_data_type)
-                .map_err(|e| QueryError::ExecutionError(format!("Failed to alter column type in catalog post-migration: {}", e)))?;
+            catalog_write_guard.alter_table_alter_column_type(table_name, column_name, new_ast_data_type)?;
         }
 
         let message = format!("Table '{}' altered: column '{}' type changed to {}. Data migration completed.", table_name, column_name, new_ast_data_type);
@@ -1591,7 +1628,7 @@ mod tests {
     use crate::storage::buffer::BufferPoolManager;
     use tempfile::NamedTempFile;
     use tempfile::TempDir;
-    use crate::query::parser::ast::DataType as AstDataType;
+    
     use crate::catalog::column::Column as CatalogColumn;
     use crate::catalog::table::Table as CatalogTable;
     use crate::transaction::wal::log_manager::{LogManager, LogManagerConfig};
@@ -1617,7 +1654,7 @@ mod tests {
         let buffer_pool = Arc::new(BufferPoolManager::new_with_wal(100, db_path, log_manager.clone()).unwrap());
         let catalog_instance = Arc::new(RwLock::new(Catalog::new()));
         {
-            let mut catalog_guard = catalog_instance.write().unwrap();
+            let catalog_guard = catalog_instance.write().unwrap();
             for (table_name, cols) in tables_to_create {
                 let table = CatalogTable::new(table_name.to_string(), cols);
                 catalog_guard.create_table(table).unwrap();

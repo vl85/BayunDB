@@ -494,7 +494,7 @@ mod tests {
         
         // Try to create an iterator - this may sometimes fail due to file locking or other issues
         match log_manager.get_log_iterator_from_lsn(0) {
-            Ok(mut iterator) => {
+            Ok(iterator) => {
                 // Count the number of records (this may be 0 if there are timing issues)
                 let records: Vec<_> = iterator.collect();
                 println!("Found {} records in the log", records.len());

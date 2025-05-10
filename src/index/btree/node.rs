@@ -324,7 +324,7 @@ mod tests {
             node.values.push(Rid::new(0, (1000 + i) as u32));
         }
 
-        let (mut new_node, promotion_key) = node.split_leaf();
+        let (new_node, promotion_key) = node.split_leaf();
 
         // Original node should have the first half
         assert_eq!(node.keys, vec![0, 10, 20]);

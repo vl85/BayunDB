@@ -5,6 +5,7 @@
 use super::schema::DataType;
 use serde::{Serialize, Deserialize};
 use crate::query::parser::ast::Value as AstValue; // Import AstValue
+use crate::query::executor::result::QueryError; // ADDED
 
 /// Represents a column in a database table
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,7 +77,7 @@ impl Column {
     }
     
     /// Create a column from a column definition
-    pub(crate) fn from_column_def(col_def: &crate::query::parser::ast::ColumnDef) -> Result<Self, String> {
+    pub(crate) fn from_column_def(col_def: &crate::query::parser::ast::ColumnDef) -> Result<Self, QueryError> { // CHANGED Result Type
         // Convert AST DataType to catalog DataType
         let data_type = match col_def.data_type {
             crate::query::parser::ast::DataType::Integer => DataType::Integer,
@@ -94,7 +95,12 @@ impl Column {
                 // Non-literal default expressions are not stored as AstValue for now.
                 // This path would be hit if default is, e.g., a function call.
                 // For now, this means no default will be applied by prepare_row_for_insert for such columns.
-                None 
+                // Consider returning an error if strict default literal is required or a more complex default handling is not yet in place.
+                // For ALTER TABLE ADD COLUMN, a non-literal default might be problematic if it cannot be evaluated to a storable AstValue.
+                return Err(QueryError::InvalidOperation(format!(
+                    "Default value for column '{}' must be a literal value for this operation.",
+                    col_def.name
+                )));
             }
         } else {
             None

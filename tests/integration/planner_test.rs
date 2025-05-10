@@ -108,7 +108,7 @@ fn test_wildcard_projection() -> Result<()> {
 
     // To test wildcard expansion, we need to add the 'employees' table to the catalog
     {
-        let mut cat_guard = catalog.write().unwrap();
+        let cat_guard = catalog.write().unwrap();
         // Define some columns for the employees table
         let emp_columns = vec![
             bayundb::catalog::Column::new("id".to_string(), bayundb::catalog::DataType::Integer, false, true, None),

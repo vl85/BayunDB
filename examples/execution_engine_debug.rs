@@ -95,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let physical_plan = standalone_planner.create_physical_plan(&plan);
         println!("Physical plan created: {:?}", physical_plan.is_ok());
         
-        if let Ok(phys_plan) = physical_plan {
+        if let Ok(_phys_plan) = physical_plan {
             // Test cost estimation
             let cost = standalone_planner.estimate_cost(&PhysicalPlan::SeqScan {
                 table_name: "test_table".to_string(),

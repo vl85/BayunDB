@@ -48,7 +48,7 @@ This document outlines the planned features, improvements, and long-term vision 
     *   [ ] More comprehensive `GROUP BY` and `HAVING` clause functionality.
     *   [ ] Add support for more data types (e.g., `DATE`, `TIMESTAMP`, `DECIMAL`).
     *   [ ] Support default values for new columns in ALTER TABLE ADD COLUMN.
-    *   [ ] Support column type changes (ALTER COLUMN ... TYPE ...).
+    *   [x] Support column type changes (ALTER COLUMN ... TYPE ...).
     *   [ ] More complex data migration scenarios (multiple rows, non-null constraints, etc).
 2.  **Query Optimizer Enhancements:**
     *   [ ] Introduce a basic cost-based optimizer.

@@ -72,6 +72,9 @@ fn parse_prefix_expression(parser: &mut Parser) -> ParseResult<Expression> {
                     } else if val.eq_ignore_ascii_case("false") {
                         parser.next_token();
                         Ok(Expression::Literal(Value::Boolean(false)))
+                    } else if val.eq_ignore_ascii_case("null") {
+                        parser.next_token();
+                        Ok(Expression::Literal(Value::Null))
                     } else {
                         // If not a boolean, then it's a column reference or other identifier
                         parse_column_reference(parser)

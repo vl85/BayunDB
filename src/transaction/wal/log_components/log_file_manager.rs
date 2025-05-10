@@ -470,8 +470,8 @@ impl LogFileManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use crate::transaction::wal::log_record::{LogRecord, LogRecordError};
-    use crate::transaction::wal::log_buffer::LogBufferConfig;
+    
+    
 
     fn create_test_config() -> (TempDir, LogManagerConfig) {
         let temp_dir = TempDir::new().unwrap();
@@ -528,7 +528,7 @@ mod tests {
         
         // Create the file manager directly instead of using a thread
         match LogFileManager::new(&config) {
-            Ok((mut manager, _)) => {
+            Ok((manager, _)) => {
                 // Write enough data to trigger file rotation
                 let small_data = vec![b'X'; 60]; // 60 bytes
                 

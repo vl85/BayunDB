@@ -68,8 +68,10 @@ impl fmt::Display for DataValue {
 impl PartialOrd for DataValue {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
-            // Null is incomparable with anything
-            (DataValue::Null, _) | (_, DataValue::Null) => None,
+            // Define an ordering for NULLs: NULLS FIRST
+            (DataValue::Null, DataValue::Null) => Some(Ordering::Equal),
+            (DataValue::Null, _) => Some(Ordering::Less),    // Null is less than any non-null value
+            (_, DataValue::Null) => Some(Ordering::Greater), // Any non-null value is greater than null
             
             // Compare integers
             (DataValue::Integer(a), DataValue::Integer(b)) => a.partial_cmp(b),
@@ -82,12 +84,16 @@ impl PartialOrd for DataValue {
             (DataValue::Float(a), DataValue::Integer(b)) => a.partial_cmp(&(*b as f64)),
             
             // Compare strings
-            (DataValue::Text(a), DataValue::Text(b)) => a.partial_cmp(b),
+            (DataValue::Text(a), DataValue::Text(b)) => {
+                // This is already correct for lexicographical comparison
+                Some(a.cmp(b))
+            }
             
-            // Compare booleans
+            // Compare booleans (false < true)
             (DataValue::Boolean(a), DataValue::Boolean(b)) => a.partial_cmp(b),
             
-            // Different types are incomparable (except int/float)
+            // Different non-numeric types are incomparable
+            // (e.g., Text vs Boolean, unless one is an Integer/Float comparison)
             _ => None,
         }
     }
@@ -121,6 +127,25 @@ impl DataValue {
             },
             DataValue::Boolean(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Boolean | crate::query::parser::ast::DataType::Text),
         }
+    }
+
+    pub fn serialize_row(values: &[DataValue]) -> QueryResult<Vec<u8>> {
+        bincode::serialize(values).map_err(|e| QueryError::ExecutionError(format!("Failed to serialize row: {}", e)))
+    }
+
+    pub fn deserialize_row(bytes: &[u8], schema_for_len_check: &[crate::catalog::column::Column]) -> QueryResult<Vec<DataValue>> {
+        let values: Vec<DataValue> = bincode::deserialize(bytes).map_err(|e| QueryError::ExecutionError(format!("Failed to deserialize row: {}", e)))?;
+        // Basic check, could be more robust if schema contained full type info for deserialization context
+        // RESTORED LENGTH CHECK
+        if values.len() != schema_for_len_check.len() {
+            // Depending on strictness, this could be an error or handled by padding with Null/truncating.
+            // For now, returning an error to make it explicit.
+            return Err(QueryError::ExecutionError(format!(
+                "Deserialized row has {} values, but schema expects {}", 
+                values.len(), schema_for_len_check.len()
+            )));
+        }
+        Ok(values)
     }
 }
 
@@ -227,6 +252,18 @@ pub enum QueryError {
     /// Column not found
     #[error("Column not found: {0}")]
     ColumnNotFound(String),
+    /// Schema not found
+    #[error("Schema not found: {0}")]
+    SchemaNotFound(String),
+    /// Duplicate column
+    #[error("Duplicate column: {0}")]
+    DuplicateColumn(String),
+    /// General catalog error
+    #[error("Catalog error: {0}")]
+    CatalogError(String),
+    /// Transaction-related error
+    #[error("Transaction error: {0}")]
+    TransactionError(String),
     /// Invalid operation
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
@@ -331,6 +368,13 @@ impl QueryResultSet {
             "Empty result".to_string()
         } else {
             format!("Empty result set with columns: {}", self.columns.join(", "))
+        }
+    }
+
+    pub fn empty_ddl() -> Self {
+        QueryResultSet {
+            columns: vec!["status".to_string()],
+            rows: vec![Row::from_values(vec!["status".to_string()], vec![DataValue::Text("DDL operation successful.".to_string())])],
         }
     }
 }

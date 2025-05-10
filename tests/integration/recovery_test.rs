@@ -86,12 +86,12 @@ fn test_recovery_with_checkpoint() -> Result<()> {
     
     // Create transaction and insert pre-checkpoint data
     let txn_id_pre = 1;
-    let mut prev_lsn = 0;
+    let mut _prev_lsn = 0;
     
     // Begin transaction
-    prev_lsn = log_manager.append_log_record(
+    _prev_lsn = log_manager.append_log_record(
         txn_id_pre,
-        prev_lsn,
+        _prev_lsn,
         LogRecordType::Begin,
         LogRecordContent::Transaction(
             bayundb::transaction::wal::log_record::TransactionOperationContent {
@@ -119,9 +119,9 @@ fn test_recovery_with_checkpoint() -> Result<()> {
             page_info_pre_checkpoint.push((page_id, record_id, *key, value.clone()));
             
             // Log the insert
-            prev_lsn = log_manager.append_log_record(
+            _prev_lsn = log_manager.append_log_record(
                 txn_id_pre,
-                prev_lsn,
+                _prev_lsn,
                 LogRecordType::Insert,
                 LogRecordContent::Data(
                     DataOperationContent {
@@ -143,9 +143,9 @@ fn test_recovery_with_checkpoint() -> Result<()> {
     buffer_pool.unpin_page(page_id, true)?;
     
     // Commit the transaction with pre-checkpoint data
-    prev_lsn = log_manager.append_log_record(
+    _prev_lsn = log_manager.append_log_record(
         txn_id_pre,
-        prev_lsn,
+        _prev_lsn,
         LogRecordType::Commit,
         LogRecordContent::Transaction(
             bayundb::transaction::wal::log_record::TransactionOperationContent {
@@ -173,12 +173,12 @@ fn test_recovery_with_checkpoint() -> Result<()> {
     
     // Create transaction and insert post-checkpoint data
     let txn_id_post = 2;
-    let mut prev_lsn = 0;
+    let mut _prev_lsn = 0;
     
     // Begin transaction
-    prev_lsn = log_manager.append_log_record(
+    _prev_lsn = log_manager.append_log_record(
         txn_id_post,
-        prev_lsn,
+        _prev_lsn,
         LogRecordType::Begin,
         LogRecordContent::Transaction(
             bayundb::transaction::wal::log_record::TransactionOperationContent {
@@ -206,9 +206,9 @@ fn test_recovery_with_checkpoint() -> Result<()> {
             page_info_post_checkpoint.push((page_id, record_id, *key, value.clone()));
             
             // Log the insert
-            prev_lsn = log_manager.append_log_record(
+            _prev_lsn = log_manager.append_log_record(
                 txn_id_post,
-                prev_lsn,
+                _prev_lsn,
                 LogRecordType::Insert,
                 LogRecordContent::Data(
                     DataOperationContent {
@@ -230,9 +230,9 @@ fn test_recovery_with_checkpoint() -> Result<()> {
     buffer_pool.unpin_page(page_id, true)?;
     
     // Commit the transaction with post-checkpoint data
-    prev_lsn = log_manager.append_log_record(
+    _prev_lsn = log_manager.append_log_record(
         txn_id_post,
-        prev_lsn,
+        _prev_lsn,
         LogRecordType::Commit,
         LogRecordContent::Transaction(
             bayundb::transaction::wal::log_record::TransactionOperationContent {

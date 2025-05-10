@@ -15,11 +15,7 @@ use crate::catalog::column::Column;
 
 // Imported within the module for testing
 #[cfg(test)]
-use std::path::PathBuf;
-#[cfg(test)]
 use std::iter::Iterator;
-#[cfg(test)]
-use std::env::temp_dir;
 
 /// A table scan operator that scans all tuples in a table
 pub struct TableScanOperator {
@@ -186,10 +182,21 @@ impl TableScanOperator {
                             } else if padded_values.len() > expected_len {
                                 padded_values.truncate(expected_len);
                             }
+                            if padded_values.len() > schema_ref.columns().len() {
+                                // Truncate if deserialized row is longer (e.g. new data from a wider schema, old columns dropped)
+                                // This case might be less common or indicate an issue if not handled carefully.
+                                eprintln!(
+                                    "[TABLE_SCAN_OPERATOR WARNING] RID: {:?}. Deserialized data has more columns ({}) than schema ({}). Truncating.",
+                                    rid, padded_values.len(), schema_ref.columns().len()
+                                );
+                                padded_values.truncate(schema_ref.columns().len());
+                            }
+
                             let row = Row::from_values(column_names, padded_values);
                             self.buffer_pool.unpin_page(current_page_id_val, false).map_err(|e_unpin|
                                 QueryError::StorageError(format!("Failed to unpin page {} after successful record processing. Unpin error: {}", current_page_id_val, e_unpin))
                             )?;
+
                             return Ok(Some(row));
                         } else {
                             let _ = self.buffer_pool.unpin_page(current_page_id_val, false);
@@ -251,9 +258,10 @@ mod tests {
     use crate::catalog::{Column, DataType, Table};
 
     // Helper function to setup test catalog
+    #[allow(dead_code)]
     fn setup_test_catalog() {
         let catalog = Catalog::instance();
-        let mut catalog_guard = catalog.write().unwrap();
+        let catalog_guard = catalog.write().unwrap();
         
         if catalog_guard.get_table("users").is_none() {
             let columns = vec![

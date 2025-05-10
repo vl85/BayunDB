@@ -11,6 +11,7 @@ use bincode;
 use anyhow::anyhow;
 
 // Create a temporary database file for testing
+#[allow(dead_code)]
 pub fn create_temp_db_file() -> Result<(NamedTempFile, String)> {
     let file = NamedTempFile::new()?;
     let path = file.path().to_str().unwrap().to_string();
@@ -18,6 +19,7 @@ pub fn create_temp_db_file() -> Result<(NamedTempFile, String)> {
 }
 
 // Create a buffer pool manager with a temporary database
+#[allow(dead_code)]
 pub fn create_test_buffer_pool(pool_size: usize) -> Result<(Arc<BufferPoolManager>, NamedTempFile)> {
     let (file, path) = create_temp_db_file()?;
     let buffer_pool = Arc::new(BufferPoolManager::new(pool_size, path)?);
@@ -25,11 +27,13 @@ pub fn create_test_buffer_pool(pool_size: usize) -> Result<(Arc<BufferPoolManage
 }
 
 // Generate test data of specified size
+#[allow(dead_code)]
 pub fn generate_test_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 256) as u8).collect()
 }
 
 // Helper function to insert test data into a specified table
+#[allow(dead_code)]
 pub fn insert_test_data(
     table_name: &str,
     data_to_insert: Vec<Vec<DataValue>>,
@@ -88,6 +92,7 @@ pub fn insert_test_data(
 
 // Create a test table with data for query tests
 // Returns the table ID (simplified) and a vector of sample rows
+#[allow(dead_code)]
 pub fn create_test_table_with_data(buffer_pool: Arc<BufferPoolManager>) -> Result<(u32, Vec<Row>)> {
     // Create page manager
     let page_manager = PageManager::new();
