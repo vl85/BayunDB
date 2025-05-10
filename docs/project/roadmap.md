@@ -1,137 +1,83 @@
 # BayunDB Development Roadmap
 
-This document outlines the planned development steps for BayunDB, organized by completion status and priority.
+This document outlines the planned features, improvements, and long-term vision for BayunDB.
 
-## Completed Features
+## Current Status (as of YYYY-MM-DD)
 
-1. **Query Planning and Execution**
-   - SQL parser and abstract syntax tree
-   - Logical query planning
-   - Physical query planning
-   - Basic execution operators (Scan, Filter, Project)
-   - Basic predicate evaluation
-   - Parser support for JOIN operations (INNER, LEFT)
-   - Integration tests for JOIN queries
-   - Join execution operators (Hash Join, Nested Loop Join)
-   - Parser support for GROUP BY and HAVING clauses
-   - Parser support for aggregate functions (COUNT, SUM, AVG, MIN, MAX)
-   - Logical planning for aggregation
-   - Physical planning for aggregation
-   - Execution engine implementation for aggregation operators (HashAggregate, SortAggregate)
-   - GROUP BY, HAVING, and aggregation function support (COUNT, SUM, AVG, MIN, MAX)
-   - Integration tests for aggregation queries
-   - CLI support for aggregation queries
+*Replace this section with a summary of the current state of the project, key completed features, and any known major limitations.*
 
-2. **Performance Benchmarking**
-   - Buffer pool performance benchmarks
-   - B+Tree index benchmarks
-   - Query parser benchmarks with JSON output format
-   - Automated benchmark report generation
-   - WAL and recovery performance benchmarks
+### Core Features Implemented:
 
-3. **Transaction Management (Partial)**
-   - WAL (Write-Ahead Log) implementation
-   - Transaction manager
-   - Basic recovery implementation
+*   SQL Parsing (SELECT, CREATE TABLE, INSERT, UPDATE, DELETE)
+*   Logical and Physical Query Planning
+*   Query Execution Engine (Iterator Model)
+    *   Operators: TableScan, Filter, Projection, NestedLoopJoin, HashJoin, HashAggregate
+*   Catalog Management (Schema, Tables)
+*   Storage Engine:
+    *   Page-based storage
+    *   Buffer Pool Manager (LRU eviction)
+    *   Disk Manager
+*   B+Tree Indexing (Basic operations)
+*   Write-Ahead Logging (WAL) for durability (Basic operations)
+*   Basic Recovery Mechanism
+*   Command-Line Interface (`bnql`)
 
-4. **Command Line Interface (CLI)**
-   - Interactive SQL shell with command history
-   - Direct query execution for scripting
-   - Database information display
-   - Database creation
-   - Formatted table output for query results
+### Known Limitations:
 
-## Current Development Focus
+*   Limited SQL dialect support (e.g., no complex subqueries, advanced JOIN types, window functions).
+*   Simple query optimizer; no advanced cost-based optimization yet.
+*   Limited data type support.
+*   No comprehensive concurrency control (e.g., full transaction isolation levels beyond basic locking).
+*   Basic error handling and reporting in some areas.
+*   Performance characteristics not yet fully optimized across all components.
+*   No network server for remote client connections.
 
-1. **Query Execution Enhancements**
-   - Add ORDER BY implementation
-   - Add LIMIT/OFFSET support
-   - Add subquery support
+## Near-Term Goals (Next 3-6 Months)
 
-2. **ACID Transaction Support Completion**
-   - Full ARIES-style recovery with transaction rollback
-   - Isolation level support (READ COMMITTED, REPEATABLE READ, SERIALIZABLE)
-   - Deadlock detection and prevention
+*Replace this section with specific, actionable goals for the near future. Be as concrete as possible.* 
 
-3. **B+Tree Index Enhancements**
-   - Support for concurrency in B+Tree operations
-   - Support for compound keys
-   - Index scan operators in query execution
-   - Index usage in query planning
+1.  **Enhanced SQL Support:**
+    *   [ ] Implement `ALTER TABLE` statements.
+    *   [ ] Support for more `JOIN` types (e.g., `OUTER JOIN`).
+    *   [ ] Basic subquery support in `WHERE` clauses.
+    *   [ ] More comprehensive `GROUP BY` and `HAVING` clause functionality.
+2.  **Improved Transaction Management:**
+    *   [ ] Implement stricter transaction isolation levels (e.g., Serializable Snapshot Isolation or Two-Phase Locking).
+    *   [ ] Robust deadlock detection and resolution.
+3.  **Query Optimizer Enhancements:**
+    *   [ ] Introduce a more capable cost model.
+    *   [ ] Implement basic rule-based optimizations (e.g., predicate pushdown).
+4.  **Storage & Performance:**
+    *   [ ] Improve B+Tree concurrency and performance.
+    *   [ ] Investigate and implement more efficient page layouts or compression for specific data types.
+    *   [ ] Add support for more data types (e.g., `DATE`, `TIMESTAMP`, `DECIMAL`).
+5.  **Testing & Reliability:**
+    *   [ ] Expand integration test coverage, especially for transactions and recovery.
+    *   [ ] Implement more comprehensive stress testing.
+    *   [ ] Set up regular benchmarking and performance tracking.
 
-4. **Comprehensive Error Handling**
-   - Improve error reporting and recovery
-   - Add debugging tools
-   - Implement more robust exception handling
+## Mid-Term Goals (6-12 Months)
 
-5. **Schema and Catalog Management**
-   - Build metadata storage system
-   - Implement schema versioning
-   - Add constraint management
-   - Implement DDL operations (CREATE TABLE, ALTER TABLE, DROP TABLE)
+*Replace this section with broader goals for the medium term.*
 
-## In Progress Features
+*   **Network Protocol & Server:** Design and implement a basic server to allow remote client connections.
+*   **Advanced Indexing:** Explore other index types (e.g., Hash Index, GiST for extensibility).
+*   **User-Defined Functions (UDFs):** Basic support for UDFs.
+*   **Views:** Implement SQL Views.
+*   **Security:** Basic authentication and authorization mechanisms.
 
-1. **Schema Management**
-   - Parser support for CREATE TABLE statements
-   - Schema validation and type checking
-   - Table metadata management
-   - Catalog management
-   - Support for ALTER TABLE operations
+## Long-Term Vision (12+ Months)
 
-## Medium-term Goals
+*Replace this section with the aspirational, long-term vision for BayunDB.*
 
-1. **Server Connection Handling**
-   - Network protocol implementation
-   - Client connection management
-   - Authentication and authorization
-   - Client/server architecture
-   - Connection pooling
+*   Highly performant and scalable SQL database competitive with existing open-source solutions.
+*   Extensible architecture allowing for new storage engines, index types, and features.
+*   Potential for distributed query processing capabilities.
+*   Strong community and adoption.
 
-2. **Advanced SQL Functionality**
-   - Support complex joins (outer joins, semi-joins)
-   - Implement window functions
-   - Prepared statements
-   - Views
-   - Foreign key constraints
-   - Triggers
-   - Stored procedures
+## How to Contribute
 
-3. **Enhanced Testing Framework**
-   - Replace string-based predicate representation with proper AST evaluation
-   - Create a mock data generator for testing with realistic datasets
-   - Support for predefined test tables with known contents
-   - Framework for verifying query results match expected outputs
-   - Golden test files for query result verification
+Interested in contributing? Please check the [Contribution Guidelines](CONTRIBUTING.md) (or link to the relevant section in `documentation_guide.md` or `DEVELOPMENT.md`) and the open issues on the project tracker.
 
-## Long-term Vision
-
-1. **Distributed Database Support**
-   - Distributed query execution
-   - Data partitioning
-   - Replication
-   - Consensus protocol implementation
-   - Distributed transactions
-
-2. **Performance Optimization**
-   - Cost-based optimizer
-   - Statistics collection and utilization
-   - Query caching
-   - Just-in-time compilation of queries
-   - Advanced indexing techniques
-
-## Contributing
-
-If you're interested in working on any of these features, please check our [Contributing Guide](../contributing/contributing.md) and [Development Workflow](../development/workflow.md) documents. We prioritize tasks in our issue tracker and welcome contributions that align with our roadmap.
-
-## Timeline and Milestones
-
-| Milestone | Target Date | Key Features |
-|-----------|-------------|--------------|
-| v0.1.0    | Completed   | Basic storage engine, B+Tree indexes |
-| v0.2.0    | Completed   | SQL parser, query planning and execution |
-| v0.3.0    | Completed   | Command Line Interface (CLI), basic testing framework |
-| v0.4.0    | In Progress | ACID transactions, advanced indexing, DDL operations |
-| v0.5.0    | Q1 2024     | Server connection handling, client protocol |
-| v0.6.0    | Q2 2024     | Advanced SQL features, improved error handling |
-| v1.0.0    | Q4 2024     | Production-ready release with comprehensive documentation | 
+---
+*This roadmap is a living document and will be updated regularly to reflect the project's progress and priorities.* 

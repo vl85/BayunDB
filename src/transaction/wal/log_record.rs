@@ -283,53 +283,138 @@ impl LogRecord {
 mod tests {
     use super::*;
 
+    // Helper to check LogRecord equality, especially for content
+    fn assert_records_equal(r1: &LogRecord, r2: &LogRecord) {
+        assert_eq!(r1.lsn, r2.lsn);
+        assert_eq!(r1.txn_id, r2.txn_id);
+        assert_eq!(r1.prev_lsn, r2.prev_lsn);
+        assert_eq!(r1.record_type, r2.record_type);
+        match (&r1.content, &r2.content) {
+            (LogRecordContent::Transaction(t1), LogRecordContent::Transaction(t2)) => {
+                // Timestamps can be slightly different, so we don't assert them strictly
+                // assert_eq!(t1.timestamp, t2.timestamp);
+                assert_eq!(t1.metadata, t2.metadata);
+            }
+            (LogRecordContent::Data(d1), LogRecordContent::Data(d2)) => {
+                assert_eq!(d1.table_id, d2.table_id);
+                assert_eq!(d1.page_id, d2.page_id);
+                assert_eq!(d1.record_id, d2.record_id);
+                assert_eq!(d1.before_image, d2.before_image);
+                assert_eq!(d1.after_image, d2.after_image);
+            }
+            (LogRecordContent::Checkpoint(c1), LogRecordContent::Checkpoint(c2)) => {
+                // Timestamps can be slightly different
+                // assert_eq!(c1.timestamp, c2.timestamp);
+                assert_eq!(c1.active_transactions, c2.active_transactions);
+                assert_eq!(c1.dirty_pages, c2.dirty_pages);
+            }
+            _ => panic!("Mismatched LogRecordContent types during comparison"),
+        }
+    }
+
     #[test]
     fn test_begin_record_serialization() {
-        let record = LogRecord::new_begin(1, 2);
+        let record = LogRecord::new_begin(1, 100);
         let serialized = record.serialize().unwrap();
         let deserialized = LogRecord::deserialize(&serialized).unwrap();
-        
-        assert_eq!(deserialized.lsn, 1);
-        assert_eq!(deserialized.txn_id, 2);
-        assert_eq!(deserialized.prev_lsn, 0);
-        assert_eq!(deserialized.record_type, LogRecordType::Begin);
+        assert_records_equal(&record, &deserialized);
     }
 
     #[test]
     fn test_commit_record_serialization() {
-        let record = LogRecord::new_commit(5, 2, 3);
+        let record = LogRecord::new_commit(2, 100, 1);
         let serialized = record.serialize().unwrap();
         let deserialized = LogRecord::deserialize(&serialized).unwrap();
-        
-        assert_eq!(deserialized.lsn, 5);
-        assert_eq!(deserialized.txn_id, 2);
-        assert_eq!(deserialized.prev_lsn, 3);
-        assert_eq!(deserialized.record_type, LogRecordType::Commit);
+        assert_records_equal(&record, &deserialized);
+    }
+
+    #[test]
+    fn test_abort_record_serialization() {
+        let record = LogRecord::new_abort(3, 100, 2);
+        let serialized = record.serialize().unwrap();
+        let deserialized = LogRecord::deserialize(&serialized).unwrap();
+        assert_records_equal(&record, &deserialized);
     }
 
     #[test]
     fn test_update_record_serialization() {
-        let record = LogRecord::new_update(
-            10, 5, 8, 1, 2, 3, 
-            vec![1, 2, 3], 
-            vec![4, 5, 6]
+        let before = vec![1, 2, 3];
+        let after = vec![4, 5, 6];
+        let record = LogRecord::new_update(4, 100, 3, 1, 1, 1, before, after);
+        let serialized = record.serialize().unwrap();
+        let deserialized = LogRecord::deserialize(&serialized).unwrap();
+        assert_records_equal(&record, &deserialized);
+    }
+
+    #[test]
+    fn test_insert_record_serialization() {
+        let after = vec![7, 8, 9];
+        let record = LogRecord::new_insert(5, 100, 4, 1, 1, 2, after);
+        let serialized = record.serialize().unwrap();
+        let deserialized = LogRecord::deserialize(&serialized).unwrap();
+        assert_records_equal(&record, &deserialized);
+    }
+
+    #[test]
+    fn test_delete_record_serialization() {
+        let before = vec![10, 11, 12];
+        let record = LogRecord::new_delete(6, 100, 5, 1, 1, 3, before);
+        let serialized = record.serialize().unwrap();
+        let deserialized = LogRecord::deserialize(&serialized).unwrap();
+        assert_records_equal(&record, &deserialized);
+    }
+
+    #[test]
+    fn test_checkpoint_record_serialization() {
+        let active_txns = vec![100, 101];
+        let dirty_pages = vec![(1, 5), (2, 6)];
+        let record = LogRecord::new_checkpoint(7, active_txns, dirty_pages);
+        let serialized = record.serialize().unwrap();
+        let deserialized = LogRecord::deserialize(&serialized).unwrap();
+        assert_records_equal(&record, &deserialized);
+    }
+
+    #[test]
+    fn test_compensation_record_serialization() {
+        // Compensation records use DataOperationContent, so we test one variant.
+        // This represents undoing an insert, so it has a before_image (the inserted data) 
+        // and no after_image.
+        let before_image_for_compensated_insert = vec![1,2,3];
+        let record = LogRecord::new(
+            8, 
+            100, 
+            7, 
+            LogRecordType::CompensationInsert, 
+            LogRecordContent::Data(DataOperationContent {
+                table_id: 1,
+                page_id: 1,
+                record_id: 1,
+                before_image: Some(before_image_for_compensated_insert),
+                after_image: None,
+            })
         );
         let serialized = record.serialize().unwrap();
         let deserialized = LogRecord::deserialize(&serialized).unwrap();
-        
-        assert_eq!(deserialized.lsn, 10);
-        assert_eq!(deserialized.txn_id, 5);
-        assert_eq!(deserialized.prev_lsn, 8);
-        assert_eq!(deserialized.record_type, LogRecordType::Update);
-        
-        if let LogRecordContent::Data(content) = deserialized.content {
-            assert_eq!(content.table_id, 1);
-            assert_eq!(content.page_id, 2);
-            assert_eq!(content.record_id, 3);
-            assert_eq!(content.before_image.unwrap(), vec![1, 2, 3]);
-            assert_eq!(content.after_image.unwrap(), vec![4, 5, 6]);
-        } else {
-            panic!("Unexpected content type!");
+        assert_records_equal(&record, &deserialized);
+    }
+
+    #[test]
+    fn test_deserialize_invalid_data() {
+        let invalid_data = vec![1, 2, 3, 4]; // Too short / malformed
+        let result = LogRecord::deserialize(&invalid_data);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            LogRecordError::DeserializationError(_) => {},
+            _ => panic!("Expected DeserializationError"),
+        }
+
+        // Test with slightly more data, but still likely invalid
+        let slightly_better_data = bincode::serialize(&("random_string_not_a_log_record")).unwrap();
+        let result_random = LogRecord::deserialize(&slightly_better_data);
+        assert!(result_random.is_err());
+        match result_random.err().unwrap() {
+            LogRecordError::DeserializationError(_) => {},
+            _ => panic!("Expected DeserializationError for random data"),
         }
     }
 } 

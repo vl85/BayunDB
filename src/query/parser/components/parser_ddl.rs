@@ -297,4 +297,61 @@ mod tests {
             panic!("Expected CREATE TABLE statement");
         }
     }
+
+    #[test]
+    fn test_parse_data_type_function() {
+        let test_cases = vec![
+            ("INTEGER", DataType::Integer),
+            ("INT", DataType::Integer),
+            ("int", DataType::Integer),
+            ("FLOAT", DataType::Float),
+            ("REAL", DataType::Float),
+            ("real", DataType::Float),
+            ("TEXT", DataType::Text),
+            ("VARCHAR", DataType::Text),
+            ("VARCHAR(255)", DataType::Text),
+            ("char(10)", DataType::Text),
+            ("BOOLEAN", DataType::Boolean),
+            ("BOOL", DataType::Boolean),
+            ("DATE", DataType::Date),
+            ("TIMESTAMP", DataType::Timestamp),
+        ];
+
+        for (type_str, expected_type) in test_cases {
+            let mut parser = Parser::new(type_str);
+            let result = parse_data_type(&mut parser);
+            assert!(result.is_ok(), "Failed to parse data type: {}", type_str);
+            assert_eq!(result.unwrap(), expected_type, "Mismatch for type: {}", type_str);
+        }
+
+        // Test error cases
+        let error_cases = vec![
+            "BLOB", 
+            "BINARY", 
+            "UNKNOWN_TYPE",
+            "VARCHAR(", // Unterminated size
+            "INTEGER EXTRA_TOKEN" // Trailing token
+        ];
+
+        for type_str in error_cases {
+            let mut parser = Parser::new(type_str);
+            let result = parse_data_type(&mut parser);
+            assert!(result.is_err(), "Expected error for data type: {}", type_str);
+        }
+        
+        // Test parsing literal number as data type (should use IDENTIFIER path)
+        // The lexer produces TokenType::INTEGER for `123` not IDENTIFIER.
+        // parse_data_type expects an IDENTIFIER for type names unless it's a direct TokenType::INTEGER/FLOAT match.
+        // So, `CREATE TABLE t (c1 123)` would fail at `parse_data_type` if `123` is not an IDENTIFIER.
+        // However, the TokenType::INTEGER and TokenType::FLOAT arms in parse_data_type handle this.
+        let mut parser_int_literal = Parser::new("123"); // Lexer makes this TokenType::INTEGER(123)
+        let dt_int_result = parse_data_type(&mut parser_int_literal);
+        assert!(dt_int_result.is_ok());
+        assert_eq!(dt_int_result.unwrap(), DataType::Integer);
+
+        let mut parser_float_literal = Parser::new("1.23"); // Lexer makes this TokenType::FLOAT(1.23)
+        let dt_float_result = parse_data_type(&mut parser_float_literal);
+        assert!(dt_float_result.is_ok());
+        assert_eq!(dt_float_result.unwrap(), DataType::Float);
+    }
 } 

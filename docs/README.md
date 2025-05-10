@@ -9,10 +9,10 @@
   - Building from source
   - Running tests
   - Quick start examples
-- **Project Architecture**
-  - High-level architecture diagram
-  - Component overview
-  - Code organization
+- **[Project Architecture](getting-started/project_architecture.md)**
+  - High-level architecture diagram (Covered in linked document)
+  - Component overview (Covered in linked document)
+  - Code organization (Covered in linked document)
 
 ## 2. Component Documentation
 
@@ -83,30 +83,31 @@
   - Testing infrastructure
   - Benchmarking tools
 - **Contribution Guidelines**
+  - [Documentation Standards](development/documentation_guide.md)
   - Code style
   - Pull request process
   - Review criteria
 
-### 3.2 Testing
-- **Unit Testing**
-  - Test organization
-  - Writing new tests
-  - Test utilities
-- **Integration Testing**
-  - End-to-end tests
-  - Test data generation
-  - Result verification
+### 3.2 [Testing](development/testing.md)
+- **Unit Testing** (Covered in linked document)
+  - Test organization (Covered in linked document)
+  - Writing new tests (Covered in linked document)
+  - Test utilities (Covered in linked document)
+- **Integration Testing** (Covered in linked document)
+  - End-to-end tests (Covered in linked document)
+  - Test data generation (Covered in linked document)
+  - Result verification (Covered in linked document)
 
-### 3.3 Benchmarking
-- **Performance Benchmarks**
-  - Buffer pool benchmarks
-  - B+Tree benchmarks
-  - Transaction and recovery benchmarks
-  - Query execution benchmarks
-- **Analyzing Results**
-  - Interpreting benchmark data
-  - Performance comparisons
-  - Optimization opportunities
+### 3.3 [Benchmarking](development/testing.md)
+- **Performance Benchmarks** (Covered in linked document)
+  - Buffer pool benchmarks (Covered in linked document)
+  - B+Tree benchmarks (Covered in linked document)
+  - Transaction and recovery benchmarks (Covered in linked document)
+  - Query execution benchmarks (Covered in linked document)
+- **Analyzing Results** (Covered in linked document)
+  - Interpreting benchmark data (Covered in linked document)
+  - Performance comparisons (Covered in linked document)
+  - Optimization opportunities (Covered in linked document)
 
 ## 4. Reference
 
@@ -127,19 +128,19 @@
 
 ## 5. Project Management
 
-### 5.1 Roadmap
-- **Current Status**
-  - Completed features
-  - Known limitations
-- **Near-term Goals**
-  - Upcoming features
-  - Issue priorities
-- **Long-term Vision**
-  - Future architecture
-  - Research areas
+### 5.1 [Roadmap](project/roadmap.md)
+- **Current Status** (Covered in linked document)
+  - Completed features (Covered in linked document)
+  - Known limitations (Covered in linked document)
+- **Near-term Goals** (Covered in linked document)
+  - Upcoming features (Covered in linked document)
+  - Issue priorities (Covered in linked document)
+- **Long-term Vision** (Covered in linked document)
+  - Future architecture (Covered in linked document)
+  - Research areas (Covered in linked document)
 
 ### 5.2. Design Decisions
-- **Architecture Decisions**
+- **[Architecture Decisions](getting-started/project_architecture.md)** (Core architecture covered in linked document)
   - Key design choices
   - Trade-offs and rationales
   - Alternative approaches considered

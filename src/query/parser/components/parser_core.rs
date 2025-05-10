@@ -205,4 +205,40 @@ mod tests {
         let ident = parser.parse_identifier();
         assert!(ident.is_err());
     }
+
+    #[test]
+    fn test_matches_token_type_helper() {
+        assert!(matches_token_type(&TokenType::SELECT, &TokenType::SELECT));
+        assert!(!matches_token_type(&TokenType::SELECT, &TokenType::FROM));
+        assert!(matches_token_type(&TokenType::IDENTIFIER("abc".to_string()), &TokenType::IDENTIFIER(String::new())));
+        assert!(matches_token_type(&TokenType::INTEGER(123), &TokenType::INTEGER(0))); // Compares discriminant
+        assert!(!matches_token_type(&TokenType::INTEGER(123), &TokenType::FLOAT(0.0)));
+    }
+
+    #[test]
+    fn test_token_to_operator_helper() {
+        assert_eq!(token_to_operator(&TokenType::EQUALS).unwrap(), Operator::Equals);
+        assert_eq!(token_to_operator(&TokenType::NotEqual).unwrap(), Operator::NotEquals);
+        assert_eq!(token_to_operator(&TokenType::LessThan).unwrap(), Operator::LessThan);
+        assert_eq!(token_to_operator(&TokenType::GreaterThan).unwrap(), Operator::GreaterThan);
+        assert_eq!(token_to_operator(&TokenType::LessEqual).unwrap(), Operator::LessEquals);
+        assert_eq!(token_to_operator(&TokenType::GreaterEqual).unwrap(), Operator::GreaterEquals);
+        assert_eq!(token_to_operator(&TokenType::PLUS).unwrap(), Operator::Plus);
+        assert_eq!(token_to_operator(&TokenType::MINUS).unwrap(), Operator::Minus);
+        assert_eq!(token_to_operator(&TokenType::MULTIPLY).unwrap(), Operator::Multiply);
+        assert_eq!(token_to_operator(&TokenType::DIVIDE).unwrap(), Operator::Divide);
+        assert_eq!(token_to_operator(&TokenType::MODULO).unwrap(), Operator::Modulo);
+        
+        assert!(token_to_operator(&TokenType::SELECT).is_err());
+        assert!(token_to_operator(&TokenType::IDENTIFIER("id".to_string())).is_err());
+    }
+
+    #[test]
+    fn test_get_operator_precedence_helper() {
+        assert_eq!(get_operator_precedence(&TokenType::EQUALS), 1);
+        assert_eq!(get_operator_precedence(&TokenType::PLUS), 2);
+        assert_eq!(get_operator_precedence(&TokenType::MULTIPLY), 3);
+        assert_eq!(get_operator_precedence(&TokenType::SELECT), 0); // Not an operator for expressions
+        assert_eq!(get_operator_precedence(&TokenType::LeftParen), 0); // Not an infix operator
+    }
 } 
