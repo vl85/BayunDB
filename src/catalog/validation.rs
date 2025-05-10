@@ -42,6 +42,9 @@ pub enum ValidationError {
     
     #[error("Invalid timestamp format: {0}")]
     InvalidTimestampFormat(String),
+    
+    #[error("Missing value for not null column: {0}")]
+    MissingValueForNotNullColumn(String),
 }
 
 /// Type validation result
@@ -92,10 +95,10 @@ impl TypeValidator {
         
         // Check that all non-nullable columns without defaults are provided
         for column in table.columns() {
-            if !column.is_nullable() && column.default_value().is_none() {
+            if !column.is_nullable() && column.get_default_ast_literal().is_none() {
                 let has_value = values.iter().any(|(name, _)| name == &column.name());
                 if !has_value {
-                    return Err(ValidationError::NullValueNotAllowed(column.name().to_string()));
+                    return Err(ValidationError::MissingValueForNotNullColumn(column.name().to_string()));
                 }
             }
         }

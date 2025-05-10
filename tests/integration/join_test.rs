@@ -100,6 +100,7 @@ fn test_join_query() -> Result<()> {
     let sql = "SELECT u.id, u.name, o.order_id FROM users u JOIN orders o ON u.id = o.user_id";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let catalog = Arc::new(RwLock::new(Catalog::new())); // Create catalog
     
     // Verify JOIN structure in the AST
     if let Statement::Select(select) = statement {
@@ -117,7 +118,7 @@ fn test_join_query() -> Result<()> {
         assert_eq!(join.table.alias, Some("o".to_string()), "Joined table alias should be 'o'");
         
         // Create logical plan
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
         // Verify logical plan has Join node
         match &logical_plan {
@@ -178,6 +179,7 @@ fn test_left_join_query() -> Result<()> {
     let sql = "SELECT u.id, u.name, o.order_id FROM users u LEFT JOIN orders o ON u.id = o.user_id";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let catalog = Arc::new(RwLock::new(Catalog::new())); // Create catalog
     
     // Verify JOIN structure in the AST
     if let Statement::Select(select) = statement {
@@ -187,7 +189,7 @@ fn test_left_join_query() -> Result<()> {
         assert_eq!(join.join_type, JoinType::LeftOuter, "Should be a LEFT OUTER JOIN");
         
         // Create logical plan
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
         // Verify logical plan has Join node with LEFT join type
         match &logical_plan {
@@ -248,10 +250,11 @@ fn test_nested_loop_join_selection() -> Result<()> {
     let sql = "SELECT u.id, u.name, o.order_id FROM users u JOIN orders o ON u.id > o.user_id";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let catalog = Arc::new(RwLock::new(Catalog::new())); // Create catalog
     
     if let Statement::Select(select) = statement {
         // Create logical plan
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
         // Create physical plan
         let physical_plan = planner::physical::create_physical_plan(&logical_plan);
@@ -285,13 +288,14 @@ fn test_multi_join_query() -> Result<()> {
                JOIN products p ON o.product_id = p.id";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
-    
+    let catalog = Arc::new(RwLock::new(Catalog::new())); // Create catalog
+
     if let Statement::Select(select) = statement {
         // Verify we have two JOIN clauses
         assert_eq!(select.joins.len(), 2, "Should have two JOIN clauses");
         
         // Create logical plan
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
         // Verify logical plan has multiple Join nodes
         match &logical_plan {
@@ -350,7 +354,8 @@ fn test_mixed_join_types() -> Result<()> {
                JOIN products p ON o.product_id = p.id";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
-    
+    let catalog = Arc::new(RwLock::new(Catalog::new())); // Create catalog
+
     if let Statement::Select(select) = statement {
         // Verify we have the correct JOIN types
         assert_eq!(select.joins.len(), 2, "Should have two JOIN clauses");
@@ -358,7 +363,7 @@ fn test_mixed_join_types() -> Result<()> {
         assert_eq!(select.joins[1].join_type, JoinType::Inner, "Second join should be INNER JOIN");
         
         // Create logical plan
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
         // Verify the JOIN types are preserved in the logical plan
         match &logical_plan {

@@ -32,35 +32,44 @@ impl ProjectionOperator {
     
     /// Project a row to only include the specified columns
     fn project_row(&self, input_row: Row) -> Row {
+        eprintln!("[PROJECT_ROW START] Input Row: {:?}, Self.Columns: {:?}, Self.InputAlias: '{}'", input_row, self.columns, self.input_alias);
         let mut projected_row = Row::new();
         
         if self.columns.is_empty() || self.columns.contains(&"*".to_string()) {
-            // For SELECT *, if input_alias is present, we might want to strip it from keys.
-            // However, SELECT * usually implies taking columns as they are from the direct source.
-            // The current ExecutionEngine logic for SeqScan handles this by providing unqualified names.
-            // If self.columns is genuinely from a SELECT *, this path is okay.
+            eprintln!("[PROJECT_ROW] Handling SELECT * case or empty columns.");
             return input_row;
         }
         
         for output_col_name in &self.columns {
-            // Try to find the column in the input_row using the input_alias
+            eprintln!("[PROJECT_ROW] Processing output column: '{}'", output_col_name);
             let qualified_input_col_name = format!("{}.{}", self.input_alias, output_col_name);
             
-            if !self.input_alias.is_empty() && input_row.get(&qualified_input_col_name).is_some() {
+            let mut found_value: Option<DataValue> = None;
+
+            if !self.input_alias.is_empty() {
+                eprintln!("[PROJECT_ROW] Trying qualified name: '{}'", qualified_input_col_name);
                 if let Some(value) = input_row.get(&qualified_input_col_name) {
-                    projected_row.set(output_col_name.clone(), value.clone());
+                    eprintln!("[PROJECT_ROW] Found with qualified name. Value: {:?}", value);
+                    found_value = Some(value.clone());
                 }
-            } else if input_row.get(output_col_name).is_some() {
-                // Fallback: try direct name (if input_alias was empty, or input row uses direct names)
+            }
+
+            if found_value.is_none() {
+                eprintln!("[PROJECT_ROW] Trying direct name: '{}'", output_col_name);
                 if let Some(value) = input_row.get(output_col_name) {
-                    projected_row.set(output_col_name.clone(), value.clone());
+                    eprintln!("[PROJECT_ROW] Found with direct name. Value: {:?}", value);
+                    found_value = Some(value.clone());
                 }
+            }
+            
+            if let Some(value_to_set) = found_value {
+                projected_row.set(output_col_name.clone(), value_to_set);
             } else {
-                // Column not found, set to Null. Or consider an error.
+                eprintln!("[PROJECT_ROW] Column '{}' (or its qualified version) NOT FOUND in input row. Setting to Null.", output_col_name);
                 projected_row.set(output_col_name.clone(), DataValue::Null);
             }
         }
-        
+        eprintln!("[PROJECT_ROW END] Projected Row: {:?}", projected_row);
         projected_row
     }
 }

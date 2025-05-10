@@ -32,10 +32,34 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
             }
         }
         
-        LogicalPlan::Projection { input, columns } => {
+        LogicalPlan::Projection { columns, input } => {
+            let physical_input_plan = create_physical_plan(input);
+
+            // Helper to find the alias of the ultimate data source for the projection's input
+            // This logic is useful for OperatorBuilder, but PhysicalPlan::Project doesn't store this alias.
+            fn find_source_alias_for_projection(plan: &LogicalPlan) -> Option<String> {
+                match plan {
+                    LogicalPlan::Scan { table_name, alias } => alias.clone().or_else(|| Some(table_name.clone())),
+                    LogicalPlan::Filter { input, .. } => find_source_alias_for_projection(input),
+                    LogicalPlan::Join { left, .. } => find_source_alias_for_projection(left), 
+                    _ => None,
+                }
+            }
+
+            let mut determined_input_alias = "proj_input_derived_input".to_string(); // Default value
+            let found_alias_opt = find_source_alias_for_projection(input);
+            
+            eprintln!("[CREATE_PHYS_PLAN_FOR_PROJECTION] Input to LogicalPlan::Projection: {:?}, Found source alias: {:?}", input, found_alias_opt);
+
+            if let Some(alias) = found_alias_opt {
+                determined_input_alias = alias; // This is calculated but not stored on PhysicalPlan::Project
+            }
+            eprintln!("[CREATE_PHYS_PLAN_FOR_PROJECTION] Calculated determined_input_alias (will be used by OpBuilder): '{}'", determined_input_alias);
+            
             PhysicalPlan::Project {
-                input: Box::new(create_physical_plan(input)),
                 columns: columns.clone(),
+                // No input_alias field here
+                input: Box::new(physical_input_plan),
             }
         }
         
@@ -70,6 +94,12 @@ pub fn create_physical_plan(logical_plan: &LogicalPlan) -> PhysicalPlan {
             PhysicalPlan::CreateTable {
                 table_name: table_name.clone(),
                 columns: columns.clone(),
+            }
+        }
+        
+        LogicalPlan::AlterTable { statement } => {
+            PhysicalPlan::AlterTable {
+                statement: statement.clone(),
             }
         }
     }

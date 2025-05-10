@@ -3,6 +3,7 @@
 // This module defines the AST nodes for representing parsed SQL queries.
 
 use std::fmt;
+use serde::{Serialize, Deserialize};
 
 /// Represents a SQL statement
 #[derive(Debug, Clone)]
@@ -155,14 +156,16 @@ impl fmt::Display for Expression {
     }
 }
 
-/// SQL values
-#[derive(Debug, Clone, PartialEq)]
+/// Represents a literal value in an SQL query
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Null,
     Integer(i64),
     Float(f64),
     String(String),
     Boolean(bool),
+    // Date(String), // Assuming Date and Timestamp are not direct Value types yet
+    // Timestamp(String),
 }
 
 impl fmt::Display for Value {
@@ -299,14 +302,14 @@ pub struct DeleteStatement {
 }
 
 /// ALTER TABLE statement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AlterTableStatement {
     pub table_name: String,
     pub operation: AlterTableOperation,
 }
 
 /// Supported ALTER TABLE operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AlterTableOperation {
     AddColumn(ColumnDef),
     DropColumn(String),

@@ -4,6 +4,7 @@
 
 use super::schema::DataType;
 use serde::{Serialize, Deserialize};
+use crate::query::parser::ast::Value as AstValue; // Import AstValue
 
 /// Represents a column in a database table
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,7 +18,7 @@ pub struct Column {
     /// Whether this column is part of the primary key
     primary_key: bool,
     /// Default value (if any)
-    default_value: Option<String>, // Will store as SQL string for now
+    pub(crate) default_ast_literal: Option<AstValue>, // New: Stores AST Literal if default is a literal
 }
 
 impl Column {
@@ -27,14 +28,14 @@ impl Column {
         data_type: DataType,
         nullable: bool,
         primary_key: bool,
-        default_value: Option<String>,
+        default_ast_literal: Option<AstValue>, // New
     ) -> Self {
         Column {
             name,
             data_type,
             nullable,
             primary_key,
-            default_value,
+            default_ast_literal, // New
         }
     }
     
@@ -59,8 +60,8 @@ impl Column {
     }
     
     /// Get the default value (if any)
-    pub fn default_value(&self) -> Option<&str> {
-        self.default_value.as_deref()
+    pub fn get_default_ast_literal(&self) -> Option<&AstValue> { // New
+        self.default_ast_literal.as_ref()
     }
     
     /// Get the size of this column in bytes
@@ -85,13 +86,26 @@ impl Column {
             crate::query::parser::ast::DataType::Date => DataType::Date,
             crate::query::parser::ast::DataType::Timestamp => DataType::Timestamp,
         };
-        let default_value = col_def.default_value.as_ref().map(|expr| format!("{}", expr));
+        
+        let default_literal = if let Some(expr) = &col_def.default_value {
+            if let crate::query::parser::ast::Expression::Literal(val) = expr {
+                Some(val.clone()) 
+            } else {
+                // Non-literal default expressions are not stored as AstValue for now.
+                // This path would be hit if default is, e.g., a function call.
+                // For now, this means no default will be applied by prepare_row_for_insert for such columns.
+                None 
+            }
+        } else {
+            None
+        };
+
         Ok(Column {
             name: col_def.name.clone(),
             data_type,
             nullable: col_def.nullable,
             primary_key: col_def.primary_key,
-            default_value,
+            default_ast_literal: default_literal,
         })
     }
 

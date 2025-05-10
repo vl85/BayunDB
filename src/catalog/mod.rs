@@ -146,28 +146,30 @@ impl Catalog {
 
     /// Get a mutable reference to a table in the current schema.
     /// This requires the caller to have a mutable reference to the Catalog.
-    pub(crate) fn get_table_mut_from_current_schema(&mut self, table_name: &str) -> Option<&mut Table> {
-        // Read the current schema name. This requires a read lock on current_schema.
-        // This is safe because &mut self ensures no other &mut self or &self methods are running.
-        let schema_name = self.current_schema.read().unwrap().clone();
-        
-        // Get mutable access to the HashMap of schemas. This uses &mut self.
-        // Then, get mutable access to the specific schema, and then the table.
-        self.schemas.get_mut().unwrap() // Since self is &mut Catalog, schemas (RwLock) can be .get_mut() 
-            .get_mut(&schema_name)          
-            .and_then(|schema| schema.get_table_mut(table_name)) 
+    pub fn get_table_mut_from_current_schema(&mut self, table_name: &str) -> Option<&mut Table> {
+        let current_schema_name = self.current_schema.read().unwrap().clone();
+        self.schemas.get_mut().unwrap()
+            .get_mut(&current_schema_name) 
+            .and_then(|schema| schema.get_table_mut(table_name))
     }
 
     /// Drop a table from the current schema.
     /// This requires the caller to have a mutable reference to the Catalog.
-    #[allow(dead_code)]
-    pub(crate) fn drop_table_from_current_schema(&mut self, table_name: &str) -> Result<(), String> {
-        let schema_name = self.current_schema.read().unwrap().clone();
-        match self.schemas.get_mut().unwrap().get_mut(&schema_name) {
+    pub fn drop_table_from_current_schema(&mut self, table_name: &str) -> Result<(), String> {
+        let current_schema_name = self.current_schema.read().unwrap().clone();
+        let mut schemas_guard = self.schemas.write().unwrap();
+        match schemas_guard.get_mut(&current_schema_name) {
             Some(schema) => schema.drop_table(table_name),
-            None => Err(format!("Schema {} not found when trying to drop table {}", schema_name, table_name)),
+            None => Err(format!("Schema '{}' not found when trying to drop table {}", current_schema_name, table_name)),
         }
     }
+
+    /// Retrieves a mutable reference to a table by name from a specific schema.
+    // Added this method as a public alternative if needed, though the current errors are for the one above.
+    // pub fn get_table_mut_from_schema(&mut self, schema_name: &str, table_name: &str) -> Option<&mut Table> {
+    //     self.schemas.get_mut(schema_name)
+    //         .and_then(|schema| schema.get_table_mut(table_name))
+    // }
 
     /// Get the ID of a table in the current schema
     pub fn get_table_id(&self, table_name: &str) -> Option<u32> {

@@ -89,6 +89,7 @@ impl PhysicalOptimizer {
             // For leaf nodes, return as-is
             PhysicalPlan::SeqScan { .. } => plan,
             PhysicalPlan::CreateTable { .. } => plan,
+            PhysicalPlan::AlterTable { .. } => plan,
         }
     }
     

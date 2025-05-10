@@ -67,6 +67,10 @@ impl CostModel {
                 // DDL operations typically have a fixed cost
                 10.0
             }
+            PhysicalPlan::AlterTable { .. } => {
+                // DDL operations like ALTER TABLE also have a fixed, minimal cost
+                10.0 // Assigning a similar small cost as CreateTable
+            }
         }
     }
     

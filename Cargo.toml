@@ -83,6 +83,10 @@ path = "tests/integration/validation_test.rs"
 name = "schema_management_test"
 path = "tests/integration/schema_management_test.rs"
 
+[[test]]
+name = "sql_alter_table_tests"
+path = "tests/integration/sql_alter_table_tests.rs"
+
 [[example]]
 name = "debug_validation"
 path = "examples/debug_validation.rs"

@@ -34,6 +34,7 @@ pub struct Planner {
     physical_optimizer: PhysicalOptimizer,
     operator_builder: OperatorBuilder,
     cost_model: CostModel,
+    catalog: Arc<RwLock<Catalog>>,
 }
 
 impl Planner {
@@ -42,8 +43,9 @@ impl Planner {
         Planner {
             optimizer: Optimizer::new(),
             physical_optimizer: PhysicalOptimizer::new(),
-            operator_builder: OperatorBuilder::new(buffer_pool, catalog),
+            operator_builder: OperatorBuilder::new(buffer_pool.clone(), catalog.clone()),
             cost_model: CostModel::new(),
+            catalog: catalog,
         }
     }
     
@@ -67,13 +69,16 @@ impl Planner {
     /// Create a logical plan from a statement
     pub fn create_logical_plan(&self, stmt: &Statement) -> QueryResult<LogicalPlan> {
         match stmt {
-            Statement::Select(select_stmt) => Ok(logical::build_logical_plan(select_stmt)),
+            Statement::Select(select_stmt) => Ok(logical::build_logical_plan(select_stmt, self.catalog.clone())),
             Statement::Create(create_stmt) => Ok(LogicalPlan::CreateTable {
                 table_name: create_stmt.table_name.clone(),
                 columns: create_stmt.columns.clone(),
             }),
+            Statement::Alter(alter_stmt) => Ok(LogicalPlan::AlterTable {
+                statement: alter_stmt.clone(), // Clone the AlterTableStatement
+            }),
             _ => Err(crate::query::executor::result::QueryError::PlanningError(
-                format!("Unsupported statement type: {}", stmt)
+                format!("Unsupported statement type in logical planner: {}", stmt)
             )),
         }
     }

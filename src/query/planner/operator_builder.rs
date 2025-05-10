@@ -29,18 +29,20 @@ fn join_type_to_is_left_join(join_type: &JoinType) -> bool {
     }
 }
 
-/// Helper function to get an alias for a plan node
+/// Helper function to get an alias for a plan node, recursing through Filters.
 fn get_plan_alias(plan: &PhysicalPlan, default_prefix: &str) -> String {
     match plan {
         PhysicalPlan::SeqScan { table_name, alias } => {
-            // If an explicit alias is provided, use it. Otherwise, use the table name.
             alias.clone().unwrap_or_else(|| table_name.clone())
         }
-        // For other plan types that might be inputs to a join (e.g., another join, filter, projection),
-        // they don't inherently have a simple alias in the same way a base table scan does.
-        // For now, we'll generate a simple default. This might need refinement later
-        // if specific aliasing rules for derived tables are needed by the join operator.
-        _ => format!("{}_derived_input", default_prefix), // e.g., "left_derived_input"
+        PhysicalPlan::Filter { input, .. } => {
+            // Recurse into the filter's input to find the source alias
+            get_plan_alias(input, default_prefix)
+        }
+        // TODO: Consider how to handle aliases for other input types like Joins or Aggregates.
+        // A projection over a join might need to qualify columns with the join's output aliases if any,
+        // or handle columns from different original tables. For now, this is a simplification.
+        _ => format!("{}_derived_input", default_prefix), 
     }
 }
 
@@ -158,11 +160,13 @@ impl OperatorBuilder {
             }
             
             PhysicalPlan::CreateTable { .. } => {
-                // For DDL operations, we create a special operator that just returns the result
-                // NOTE: This code path should not be used for actual DDL execution
-                // and remains only for backward compatibility and testing.
-                // DDL statements should be routed through ExecutionEngine::execute instead.
-                // See ExecutionEngine::execute_query for proper routing of DDL statements.
+                // For DDL operations, the ExecutionEngine should handle them directly.
+                // This path in OperatorBuilder is for compatibility or if a DDL plan is incorrectly routed.
+                Ok(Arc::new(Mutex::new(crate::query::executor::operators::DummyOperator::new())))
+            }
+            PhysicalPlan::AlterTable { .. } => {
+                // Similar to CreateTable, ALTER TABLE should be handled directly by ExecutionEngine.
+                // If this path is hit, it indicates a routing issue in the engine for DDL statements.
                 Ok(Arc::new(Mutex::new(crate::query::executor::operators::DummyOperator::new())))
             }
         }

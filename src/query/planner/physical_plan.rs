@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use crate::query::parser::ast::{Expression, JoinType, ColumnDef};
+use crate::query::parser::ast::{Expression, JoinType, ColumnDef, AlterTableStatement};
 
 /// Represents a node in the physical query plan
 #[derive(Debug, Clone)]
@@ -75,6 +75,11 @@ pub enum PhysicalPlan {
         /// Column definitions
         columns: Vec<ColumnDef>,
     },
+    /// Alter Table operator
+    AlterTable {
+        /// The AlterTable statement from the AST
+        statement: AlterTableStatement,
+    },
 }
 
 impl fmt::Display for PhysicalPlan {
@@ -132,6 +137,9 @@ impl fmt::Display for PhysicalPlan {
                     .map(|c| format!("{:?}", c))
                     .collect::<Vec<_>>()
                     .join(", "))
+            }
+            PhysicalPlan::AlterTable { statement } => {
+                write!(f, "AlterTable: {}", statement)
             }
         }
     }

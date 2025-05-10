@@ -3,10 +3,12 @@
 // This module defines the logical plan representation for query processing.
 
 use std::fmt;
-// use std::sync::Arc; // Unused import as per cargo build
+use std::sync::{Arc, RwLock};
 // use crate::catalog::Schema; // Unused import as per cargo build
 // crate::common::types::DataType was an erroneous addition and is ensured to be removed.
-use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, ColumnDef, AggregateFunction}; // AggregateFunction is used, despite cargo warning
+#[allow(unused_imports)] // For AggregateFunction, which is used in tests but flagged by cargo build.
+use crate::query::parser::ast::{Expression, SelectStatement, SelectColumn, ColumnReference, JoinType, ColumnDef, AggregateFunction, AlterTableStatement};
+use crate::catalog::{Catalog, Table}; // Added Table for schema access
 // Statement is reported as unused by cargo build.
 // use crate::query::parser::ast::Statement;
 // use crate::query::parser::ast::AggregateFunction; // This was part of a combined import, now handled by commenting its usage in the line above.
@@ -64,6 +66,11 @@ pub enum LogicalPlan {
         /// Column definitions
         columns: Vec<ColumnDef>,
     },
+    /// Alter an existing table
+    AlterTable {
+        /// The AlterTable statement from the AST
+        statement: AlterTableStatement,
+    },
 }
 
 impl fmt::Display for LogicalPlan {
@@ -112,36 +119,56 @@ impl fmt::Display for LogicalPlan {
             LogicalPlan::CreateTable { table_name, columns } => {
                 write!(f, "CreateTable: {} with {} columns", table_name, columns.len())
             }
+            LogicalPlan::AlterTable { statement } => {
+                write!(f, "AlterTable: {}", statement)
+            }
         }
     }
 }
 
-/// Extract column names from SelectColumn variants
-fn extract_column_names(columns: &[SelectColumn]) -> Vec<String> {
+/// Extract column names from SelectColumn variants, expanding wildcard if catalog is provided.
+fn extract_column_names(
+    columns: &[SelectColumn],
+    source_table_name: Option<&str>, // Name of the table if wildcard needs expansion
+    catalog: Option<&Arc<RwLock<Catalog>>>, // Catalog to get schema for wildcard
+) -> Vec<String> {
     let mut result = Vec::new();
-    
+    let mut expanded_wildcard = false;
+
     for col in columns {
         match col {
             SelectColumn::Wildcard => {
-                // Wildcard is handled differently - we'll need schema information
-                // from the catalog later. For now, use a placeholder.
-                result.push("*".to_string());
+                if let (Some(table_name), Some(cat)) = (source_table_name, catalog) {
+                    if !expanded_wildcard { // Expand wildcard only once even if multiple SelectColumn::Wildcard are present
+                        let catalog_guard = cat.read().unwrap(); // Handle error appropriately in real code
+                        if let Some(table_schema) = catalog_guard.get_table(table_name) {
+                            for column_def in table_schema.columns() {
+                                result.push(column_def.name().to_string());
+                            }
+                            expanded_wildcard = true;
+                        } else {
+                            // Table not found, fallback or error. For now, push "*"
+                            result.push("*".to_string());
+                        }
+                    } // else, wildcard already expanded, so this SelectColumn::Wildcard adds nothing new
+                } else {
+                    // No catalog or table name for wildcard expansion, use placeholder
+                    result.push("*".to_string());
+                }
             }
             SelectColumn::Column(col_ref) => {
                 result.push(col_ref.name.clone());
             }
-            SelectColumn::Expression { expr: _, alias } => {
+            SelectColumn::Expression { expr, alias } => {
                 if let Some(alias_name) = alias {
                     result.push(alias_name.clone());
                 } else {
-                    // For an expression without an alias, we'd ideally generate a name
-                    // For now, use a placeholder
-                    result.push("expr".to_string());
+                    // For an expression without an alias, generate a name based on the expression
+                    result.push(expr.to_string()); // Use expr.to_string() as a default name
                 }
             }
         }
     }
-    
     result
 }
 
@@ -196,13 +223,15 @@ fn contains_aggregate_expr(expr: &Expression) -> bool {
 }
 
 /// Build a logical plan from a SELECT statement
-pub fn build_logical_plan(stmt: &SelectStatement) -> LogicalPlan {
+pub fn build_logical_plan(stmt: &SelectStatement, catalog: Arc<RwLock<Catalog>>) -> LogicalPlan {
     // Start with the FROM clause - this forms the base of our plan
     if stmt.from.is_empty() {
-        // Handle case with no FROM clause (rare in SQL)
+        // Handle case with no FROM clause (e.g., SELECT 1+1)
+        // Here, extract_column_names won't have a source_table_name for wildcard, so "*" would remain "*"
+        let projection_cols = extract_column_names(&stmt.columns, None, Some(&catalog));
         return LogicalPlan::Projection {
-            columns: extract_column_names(&stmt.columns),
-            input: Box::new(LogicalPlan::Scan {
+            columns: projection_cols,
+            input: Box::new(LogicalPlan::Scan { // Or a dummy / constant value plan
                 table_name: "dual".to_string(), // Use a dummy table
                 alias: None,
             }),
@@ -210,12 +239,13 @@ pub fn build_logical_plan(stmt: &SelectStatement) -> LogicalPlan {
     }
     
     // Start with the first (or only) table in the FROM clause
-    let base_table = &stmt.from[0];
+    let base_table_ref = &stmt.from[0];
     let mut plan = LogicalPlan::Scan {
-        table_name: base_table.name.clone(),
-        alias: base_table.alias.clone(),
+        table_name: base_table_ref.name.clone(),
+        alias: base_table_ref.alias.clone(),
     };
-    
+    let mut current_source_table_name_for_wildcard = base_table_ref.name.as_str();
+
     // Process JOIN clauses if any
     for join in &stmt.joins {
         let right_plan = LogicalPlan::Scan {
@@ -229,6 +259,12 @@ pub fn build_logical_plan(stmt: &SelectStatement) -> LogicalPlan {
             condition: *join.condition.clone(),
             join_type: join.join_type.clone(),
         };
+        // After a join, wildcard expansion becomes more complex (needs to consider columns from all joined tables).
+        // For this initial fix, we'll simplify and say wildcard after join is not yet fully schema-aware.
+        // Or, if we only support `SELECT T1.*, T2.*`, that's different.
+        // For a simple `SELECT *` after join, it would list all columns from all tables.
+        // This part is NOT being fully addressed in this immediate edit for simplicity.
+        // current_source_table_name_for_wildcard = ???; // This becomes tricky
     }
     
     // If there's a WHERE clause, add a Filter node
@@ -239,29 +275,34 @@ pub fn build_logical_plan(stmt: &SelectStatement) -> LogicalPlan {
         };
     }
     
-    // Check if we need to add an Aggregate node (if GROUP BY or aggregates exist)
-    let has_group_by = stmt.group_by.is_some() && !stmt.group_by.as_ref().unwrap().is_empty();
-    let has_aggs = has_aggregates(stmt);
-    
-    if has_group_by || has_aggs {
-        // Extract aggregate expressions
+    // Handle GROUP BY and Aggregation if present
+    if has_aggregates(stmt) || stmt.group_by.as_ref().map_or(false, |gb_vec| !gb_vec.is_empty()) {
         let aggregate_expressions = extract_aggregate_expressions(&stmt.columns);
-        
-        // Extract GROUP BY expressions if present
-        let group_by = stmt.group_by.clone().unwrap_or_default();
-        
-        // Add an Aggregate node
+        let projection_names = extract_column_names(&stmt.columns, Some(current_source_table_name_for_wildcard), Some(&catalog));
+
         plan = LogicalPlan::Aggregate {
             input: Box::new(plan),
-            group_by,
+            group_by: stmt.group_by.clone().unwrap_or_default(),
             aggregate_expressions,
-            having: stmt.having.clone().map(|h| *h),
+            having: stmt.having.clone().map(|expr| *expr),
+        };
+        
+        return LogicalPlan::Projection { 
+            columns: projection_names, 
+            input: Box::new(plan),
         };
     }
     
-    // Finally, add a Projection for the SELECT clause
+    // Add a Projection node for the SELECT columns
+    // This is the main place where SELECT * expansion for non-aggregate queries will take effect.
+    let final_projection_columns = extract_column_names(
+        &stmt.columns, 
+        Some(current_source_table_name_for_wildcard), // Pass table name for wildcard
+        Some(&catalog) // Pass catalog for schema lookup
+    );
+
     LogicalPlan::Projection {
-        columns: extract_column_names(&stmt.columns),
+        columns: final_projection_columns,
         input: Box::new(plan),
     }
 }
@@ -314,7 +355,7 @@ mod tests {
         };
         
         // Build logical plan
-        let plan = build_logical_plan(&stmt);
+        let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure
         if let LogicalPlan::Projection { columns, input } = plan {
@@ -354,7 +395,7 @@ mod tests {
         };
         
         // Build logical plan
-        let plan = build_logical_plan(&stmt);
+        let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure
         if let LogicalPlan::Projection { columns, input } = plan {
@@ -439,7 +480,7 @@ mod tests {
         };
         
         // Build logical plan
-        let plan = build_logical_plan(&stmt);
+        let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure - should have Filter between Projection and Scan
         if let LogicalPlan::Projection { columns: _, input } = plan {
@@ -479,7 +520,7 @@ mod tests {
         };
         
         // Build logical plan
-        let plan = build_logical_plan(&stmt);
+        let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Should be a simple Projection -> Scan
         match plan {
@@ -530,7 +571,7 @@ mod tests {
         };
         
         // Build logical plan
-        let plan = build_logical_plan(&stmt);
+        let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure
         if let LogicalPlan::Projection { columns, input } = plan {
@@ -595,7 +636,7 @@ mod tests {
         };
         
         // Build logical plan
-        let plan = build_logical_plan(&stmt);
+        let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure
         if let LogicalPlan::Projection { columns, input } = plan {
@@ -673,7 +714,7 @@ mod tests {
         };
         
         // Build logical plan
-        let plan = build_logical_plan(&stmt);
+        let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure
         if let LogicalPlan::Projection { columns, input } = plan {

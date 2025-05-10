@@ -4,6 +4,8 @@ use bayundb::query::parser::ast::Statement;
 use bayundb::query::planner::logical::{self, LogicalPlan};
 use bayundb::query::planner::{self as planner, PhysicalPlan};
 use bayundb::query::planner::physical_optimizer::PhysicalOptimizer;
+use bayundb::catalog::Catalog;
+use std::sync::{Arc, RwLock};
 
 #[test]
 fn test_logical_plan_generation() -> Result<()> {
@@ -11,10 +13,11 @@ fn test_logical_plan_generation() -> Result<()> {
     let sql = "SELECT id, name FROM test_table WHERE id > 5";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let catalog = Arc::new(RwLock::new(Catalog::new()));
     
     if let Statement::Select(select) = statement {
         // Create logical plan from SELECT statement
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
         // Verify logical plan structure (should be Projection -> Filter -> Scan)
         match logical_plan {
@@ -51,10 +54,11 @@ fn test_physical_plan_generation() -> Result<()> {
     let sql = "SELECT id, name FROM test_table WHERE id > 5";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let catalog = Arc::new(RwLock::new(Catalog::new()));
     
     if let Statement::Select(select) = statement {
         // Create logical plan from SELECT statement
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
         // Convert to physical plan
         let physical_plan = planner::physical::create_physical_plan(&logical_plan);
@@ -100,17 +104,31 @@ fn test_wildcard_projection() -> Result<()> {
     let sql = "SELECT * FROM employees";
     
     let statement = parse(sql).map_err(|e| anyhow!("Parse error: {:?}", e))?;
+    let catalog = Arc::new(RwLock::new(Catalog::new()));
+
+    // To test wildcard expansion, we need to add the 'employees' table to the catalog
+    {
+        let mut cat_guard = catalog.write().unwrap();
+        // Define some columns for the employees table
+        let emp_columns = vec![
+            bayundb::catalog::Column::new("id".to_string(), bayundb::catalog::DataType::Integer, false, true, None),
+            bayundb::catalog::Column::new("name".to_string(), bayundb::catalog::DataType::Text, false, false, None),
+            bayundb::catalog::Column::new("role".to_string(), bayundb::catalog::DataType::Text, false, false, None),
+        ];
+        let employees_table = bayundb::catalog::Table::new("employees".to_string(), emp_columns);
+        cat_guard.create_table(employees_table).expect("Failed to create employees table for test");
+    }
     
     if let Statement::Select(select) = statement {
         // Check we have wildcard column
         assert_eq!(select.columns.len(), 1);
         
         // Create logical plan
-        let logical_plan = logical::build_logical_plan(&select);
+        let logical_plan = logical::build_logical_plan(&select, catalog.clone());
         
-        // Verify projection includes wildcard
+        // Verify projection includes expanded columns, not wildcard
         if let LogicalPlan::Projection { columns, .. } = logical_plan {
-            assert!(columns.contains(&"*".to_string()));
+            assert_eq!(columns, vec!["id".to_string(), "name".to_string(), "role".to_string()]);
         } else {
             panic!("Expected Projection as root of logical plan");
         }
