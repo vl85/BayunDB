@@ -4,7 +4,6 @@
 // It maintains the original API for backward compatibility.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::transaction::wal::log_components::log_manager_core::{LogManager as CoreLogManager, LogManagerConfig as CoreConfig, LogManagerError as CoreLogManagerError, Result as CoreResult};
 use crate::transaction::wal::log_components::log_iterator::{LogRecordIterator as CoreLogRecordIterator, LogManagerIteratorExt};

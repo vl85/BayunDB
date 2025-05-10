@@ -4,7 +4,6 @@
 
 use crate::query::planner::logical::LogicalPlan;
 use crate::query::planner::physical_plan::PhysicalPlan;
-use crate::query::parser::ast::DataType;
 use crate::query::parser::ast::Operator as AstOperator;
 use crate::query::parser::ast::Expression;
 

@@ -5,7 +5,7 @@
 
 use crate::query::parser::ast::*;
 use crate::query::parser::lexer::TokenType;
-use super::parser_core::{Parser, ParseResult, ParseError};
+use super::parser_core::{Parser, ParseResult};
 use super::parser_expressions::parse_expression;
 
 /// Parse an INSERT statement

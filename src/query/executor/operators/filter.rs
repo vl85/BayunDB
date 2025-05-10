@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::query::executor::result::{Row, QueryResult, DataValue, QueryError};
 use crate::query::executor::operators::Operator;
 use crate::catalog::TypeValidator;
-use crate::query::parser::ast::{Expression, Operator as AstOperator, Value};
+use crate::query::parser::ast::{Expression, Operator as AstOperator};
 
 /// Filter operator
 pub struct FilterOperator {

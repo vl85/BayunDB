@@ -13,7 +13,7 @@ pub mod agg;
 // Define the common Operator trait
 use crate::query::executor::result::{Row, QueryResult};
 use std::sync::{Arc, Mutex, RwLock};
-use crate::query::parser::ast::{Expression, JoinType};
+use crate::query::parser::ast::Expression;
 use crate::storage::buffer::BufferPoolManager;
 use crate::catalog::Catalog;
 

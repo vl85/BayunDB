@@ -7,10 +7,8 @@ use std::io::{self, Read, Write, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
-use log::warn;
 
 use crate::transaction::wal::log_components::log_manager_core::LogManagerConfig;
-use crate::transaction::wal::log_buffer::LogBufferConfig;
 
 /// Error type for log file operations
 #[derive(Error, Debug)]

@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::common::types::{Lsn, PageId, TxnId};
 use crate::storage::buffer::BufferPoolManager;
 use crate::transaction::wal::log_components::log_manager_core::{LogManager, LogManagerError};
-use crate::transaction::wal::log_record::{LogRecord, LogRecordType, LogRecordContent, DataOperationContent, TransactionOperationContent};
+use crate::transaction::wal::log_record::{LogRecordType, LogRecordContent, DataOperationContent};
 use crate::transaction::wal::log_components::log_iterator::LogManagerIteratorExt;
 
 /// Error type for recovery operations

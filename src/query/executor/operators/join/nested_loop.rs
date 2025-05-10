@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::query::executor::operators::Operator;
-use crate::query::executor::result::{Row, QueryResult, DataValue};
+use crate::query::executor::result::{Row, QueryResult};
 
 /// Nested Loop Join operator implementation
 pub struct NestedLoopJoin {

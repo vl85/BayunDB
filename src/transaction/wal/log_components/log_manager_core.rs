@@ -2,7 +2,7 @@
 //
 // This module contains the core functionality for the Write-Ahead Log manager.
 
-use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
+use std::sync::{Mutex, atomic::{AtomicU64, Ordering}};
 use thiserror::Error;
 
 use crate::transaction::wal::log_buffer::{LogBuffer, LogBufferConfig, LogBufferError};

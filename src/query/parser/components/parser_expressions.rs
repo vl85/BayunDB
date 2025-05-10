@@ -4,7 +4,7 @@
 
 use crate::query::parser::ast::*;
 use crate::query::parser::lexer::TokenType;
-use super::parser_core::{Parser, ParseResult, ParseError, token_to_operator, get_operator_precedence, matches_token_type};
+use super::parser_core::{Parser, ParseResult, ParseError, token_to_operator, get_operator_precedence};
 
 /// Parse an expression with operator precedence
 pub fn parse_expression(parser: &mut Parser, precedence: u8) -> ParseResult<Expression> {

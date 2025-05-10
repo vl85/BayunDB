@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::transaction::wal::log_components::log_manager_core::{LogManager, LogManagerError, Result};
-use crate::transaction::wal::log_record::{LogRecord, LogRecordError};
+use crate::transaction::wal::log_record::LogRecord;
 use crate::transaction::wal::log_components::log_file_manager::{LogFileManager, LogFileHeader};
 
 /// Iterator for traversing log records

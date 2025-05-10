@@ -3,13 +3,12 @@
 // This module implements a simple table scan operator for query execution.
 
 use std::sync::{Arc, Mutex, RwLock};
-use std::collections::HashMap;
 
 use crate::query::executor::operators::Operator;
 use crate::query::executor::result::{Row, QueryResult, QueryError, DataValue};
 use crate::storage::buffer::BufferPoolManager;
 use crate::storage::page::{PageManager, PageError};
-use crate::common::types::{PageId, Page, Rid};
+use crate::common::types::{PageId, Rid};
 use crate::catalog::{Catalog, Table};
 
 // Imported within the module for testing

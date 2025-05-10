@@ -9,7 +9,6 @@ use thiserror::Error;
 use crate::common::types::{Lsn, PageId, TxnId};
 use crate::storage::buffer::BufferPoolManager;
 use crate::transaction::wal::log_manager::{LogManager, LogManagerError};
-use crate::transaction::wal::log_record::{LogRecord, LogRecordType, LogRecordContent};
 
 /// Error type for recovery operations
 #[derive(Error, Debug)]

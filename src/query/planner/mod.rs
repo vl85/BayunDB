@@ -20,12 +20,11 @@ pub use self::physical_optimizer::PhysicalOptimizer;
 pub use self::operator_builder::OperatorBuilder;
 pub use self::cost_model::CostModel;
 
-use crate::query::parser::ast::{Statement, DataType};
+use crate::query::parser::ast::Statement;
 use crate::query::parser::parse;
 use crate::query::executor::result::QueryResult;
 use std::sync::Arc;
 use crate::storage::buffer::BufferPoolManager;
-use std::path::PathBuf;
 use crate::catalog::Catalog;
 use std::sync::RwLock;
 

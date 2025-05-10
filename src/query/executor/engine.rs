@@ -263,7 +263,7 @@ impl ExecutionEngine {
     
     /// Execute a CREATE TABLE statement
     fn execute_create(&self, create: CreateStatement) -> QueryResult<QueryResultSet> {
-        use crate::catalog::{Catalog, Table, Column};
+        use crate::catalog::{Table, Column};
         use crate::query::executor::result::DataValue;
         
         // Use the injected catalog instance
@@ -281,7 +281,7 @@ impl ExecutionEngine {
         let table = Table::new(create.table_name.clone(), columns);
         
         // Acquire a write lock on the catalog to create the table
-        let mut catalog_guard = catalog_instance.write().map_err(|e| 
+        let catalog_guard = catalog_instance.write().map_err(|e| 
             QueryError::ExecutionError(format!("Failed to acquire catalog write lock: {}", e)))?;
         catalog_guard.create_table(table)
             .map_err(|e| QueryError::ExecutionError(format!("Failed to create table: {}", e)))?;

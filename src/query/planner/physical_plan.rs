@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use crate::query::parser::ast::{Expression, JoinType, ColumnDef, DataType};
+use crate::query::parser::ast::{Expression, JoinType, ColumnDef};
 
 /// Represents a node in the physical query plan
 #[derive(Debug, Clone)]
