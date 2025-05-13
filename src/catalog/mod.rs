@@ -12,6 +12,7 @@ pub mod compatibility;
 pub mod expression;
 pub mod convert;
 pub mod catalog;
+pub mod alter_table;
 
 // Re-export key types
 pub use self::schema::Schema;
