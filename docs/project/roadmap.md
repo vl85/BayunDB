@@ -43,6 +43,7 @@ This document outlines the planned features, improvements, and long-term vision 
 - Broaden SQL support and data types
 - Improve query performance and reliability
 - Expand testing and documentation
+- Benchmark against SQLite for feature parity and performance
 
 1.  **Enhanced SQL Support:**
     *   [ ] Support for more `JOIN` types (e.g., `OUTER JOIN`).
@@ -65,6 +66,19 @@ This document outlines the planned features, improvements, and long-term vision 
 5.  **Documentation & Community:**
     *   [x] Add more tutorials and example applications for aggregation and grouping
     *   [ ] Create a `CONTRIBUTING.md` and issue templates to encourage community contributions.
+6.  **SQLite Feature Parity:**
+    *   [ ] Complete feature gap analysis (documented in `docs/project/sqlite_feature_parity.md`).
+    *   [ ] Implement ORDER BY and LIMIT/OFFSET in SELECT statements.
+    *   [ ] Implement DROP TABLE.
+    *   [ ] Add BLOB data type support.
+    *   [ ] Create embedded API for easier library integration.
+7.  **Performance Benchmarking:**
+    *   [ ] Implement SQLite comparison benchmark framework.
+    *   [ ] Benchmark core operations (CREATE/INSERT/SELECT/UPDATE/DELETE).
+    *   [ ] Benchmark join performance.
+    *   [ ] Benchmark transaction throughput.
+    *   [ ] Generate performance comparison reports.
+    *   [ ] Identify and fix performance bottlenecks.
 
 ## Mid-Term Goals (6-12 Months)
 

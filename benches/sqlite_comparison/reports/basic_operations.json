@@ -1,0 +1,42 @@
+{
+  "name": "Basic Operations",
+  "timestamp": "2025-05-13T23:05:30.199885600+00:00",
+  "system_info": {
+    "os": "windows",
+    "cpu": "AMD64 Family 23 Model 113 Stepping 0, AuthenticAMD",
+    "memory": "Unknown",
+    "rust_version": "1.75.0",
+    "sqlite_version": "3.41.2",
+    "bayundb_version": "0.1.0"
+  },
+  "results": [
+    {
+      "operation": "Table Creation (100 rows)",
+      "database": "SQLite",
+      "rows_affected": 100,
+      "execution_time_ms": 2.5,
+      "memory_usage_kb": null
+    },
+    {
+      "operation": "Table Creation (100 rows)",
+      "database": "BayunDB",
+      "rows_affected": 100,
+      "execution_time_ms": 3.2,
+      "memory_usage_kb": null
+    },
+    {
+      "operation": "Simple SELECT",
+      "database": "SQLite",
+      "rows_affected": 100,
+      "execution_time_ms": 1.8,
+      "memory_usage_kb": null
+    },
+    {
+      "operation": "Simple SELECT",
+      "database": "BayunDB",
+      "rows_affected": 100,
+      "execution_time_ms": 2.3,
+      "memory_usage_kb": null
+    }
+  ]
+}

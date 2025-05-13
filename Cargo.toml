@@ -43,6 +43,11 @@ harness = false
 name = "recovery_bench"
 harness = false
 
+[[bench]]
+name = "sqlite_comparison_bench"
+path = "benches/sqlite_comparison_bench.rs"
+harness = false
+
 [[test]]
 name = "parser_test"
 path = "tests/integration/parser_test.rs"
@@ -113,4 +118,8 @@ linked-hash-map = { version = "0.5", features = ["serde"] }
 [dev-dependencies]
 tempfile = "3.2"
 criterion = "0.5"
-rand = "0.8" 
+rand = "0.8"
+rusqlite = { version = "0.29.0", features = ["bundled"] }
+chrono = "0.4"
+serde_json = "1.0"
+rustc_version_runtime = "0.2.1" 
