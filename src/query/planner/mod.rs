@@ -11,6 +11,9 @@ pub mod physical_optimizer;
 pub mod operator_builder;
 pub mod cost_model;
 pub mod optimizer;
+pub mod filter_pushdown;
+pub mod materialization;
+pub mod join_reordering;
 
 // Export key types
 pub use self::logical::LogicalPlan;
