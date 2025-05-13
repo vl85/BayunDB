@@ -8,6 +8,7 @@ use crate::common::types::{Page, PageId, PagePtr, Frame, FrameId, FramePtr, Lsn}
 use crate::storage::disk::DiskManager;
 use crate::storage::buffer::error::BufferPoolError;
 use crate::storage::buffer::replacer::LRUReplacer;
+use crate::storage::page::PageManager;
 use crate::transaction::Transaction;
 use crate::transaction::wal::log_manager::LogManager;
 
@@ -38,16 +39,18 @@ impl BufferPoolManager {
             free_list.push_back(frame_id);
         }
 
-        Ok(Self {
+        let bpm_instance = Self {
             pool_size,
             frames,
             page_table: RwLock::new(HashMap::new()),
             free_list: RwLock::new(free_list),
             replacer: RwLock::new(LRUReplacer::new(pool_size)),
             disk_manager,
-            next_page_id: RwLock::new(1), // Start with page ID 1
+            next_page_id: RwLock::new(1),
             log_manager: None,
-        })
+        };
+
+        Ok(bpm_instance)
     }
     
     /// Create a new buffer pool manager with WAL support
@@ -75,8 +78,8 @@ impl BufferPoolManager {
                 frame_guard.pin_count += 1;
             }
             
-            // Update access time in LRU replacer
-            self.replacer.write().record_access(frame_id);
+            // Page is pinned, so it's not an eviction candidate. Remove from replacer.
+            self.replacer.write().remove(frame_id);
             
             // Return the page
             let frame_guard = self.frames[frame_id as usize].read();
@@ -88,45 +91,38 @@ impl BufferPoolManager {
         
         // Handle potential dirty page in the frame
         {
-            let frame = &self.frames[frame_id as usize];
+            let frame_ptr = Arc::clone(&self.frames[frame_id as usize]); // Use Arc::clone
             let dirty;
-            let page_to_write;
+            let page_to_write_opt: Option<Page>; // Option to hold cloned page
             let lsn: Lsn;
             
-            // Check if the frame contains a dirty page
             {
-                let frame_guard = frame.read();
+                let frame_guard = frame_ptr.read();
                 dirty = frame_guard.is_dirty;
                 if dirty {
-                    page_to_write = frame_guard.page.read().clone();
-                    lsn = page_to_write.lsn;
+                    page_to_write_opt = Some(frame_guard.page.read().clone());
+                    lsn = page_to_write_opt.as_ref().unwrap().lsn; // Get LSN from cloned page
                 } else {
-                    page_to_write = Page::new(0); // Dummy page, won't be used
+                    page_to_write_opt = None;
                     lsn = 0;
                 }
             }
             
-            // Write dirty page to disk if needed - WAL rule: must flush log before writing page
             if dirty {
-                // Ensure WAL records are flushed up to page's LSN before writing page
                 if let Some(ref log_manager) = self.log_manager {
                     log_manager.flush_till_lsn(lsn)?;
                 }
-                
-                self.disk_manager.write_page(&page_to_write)?;
+                self.disk_manager.write_page(page_to_write_opt.as_ref().unwrap())?; // Use cloned page
             }
         }
         
-        // Read the page from disk into a temporary buffer
         let mut new_page = Page::new(page_id);
         self.disk_manager.read_page(page_id, &mut new_page)?;
         
-        // Update the frame with new page data
         {
-            let frame = &self.frames[frame_id as usize];
-            let mut frame_guard = frame.write();
+            let frame_ptr = Arc::clone(&self.frames[frame_id as usize]); // Use Arc::clone
+            let mut frame_guard = frame_ptr.write();
             
-            // Replace the page in the frame
             {
                 let mut page_guard = frame_guard.page.write();
                 *page_guard = new_page;
@@ -134,15 +130,13 @@ impl BufferPoolManager {
             
             frame_guard.pin_count = 1;
             frame_guard.is_dirty = false;
+            // Frame is pinned, DO NOT add to replacer.
         }
         
-        // Update page table and LRU replacer
         self.page_table.write().insert(page_id, frame_id);
-        self.replacer.write().record_access(frame_id);
+        // REMOVED: self.replacer.write().record_access(frame_id);
         
-        // Return the page
-        let frame_guard = self.frames[frame_id as usize].read();
-        Ok(frame_guard.page.clone())
+        Ok(self.frames[frame_id as usize].read().page.clone())
     }
 
     /// Create a new page with transaction support
@@ -173,13 +167,15 @@ impl BufferPoolManager {
             {
                 let mut page_guard = frame_guard.page.write();
                 *page_guard = Page::new(page_id);
-                self.disk_manager.page_manager().init_page(&mut page_guard);
+                // Use stateless PageManager by creating an instance
+                PageManager::new().init_page(&mut page_guard);
                 
                 // Log the page creation operation (create a "page header" record)
                 // This is purely for recovery purposes
                 if let Some(_) = self.log_manager {
                     // Extract page header for logging
-                    let header_bytes = self.disk_manager.page_manager().get_raw_page_header(&page_guard);
+                    // Use stateless PageManager by creating an instance
+                    let header_bytes = PageManager::new().get_raw_page_header(&page_guard);
                     
                     // Log the page initialization - this updates the LSN on the page
                     let lsn = txn.log_insert(0, page_id, 0, &header_bytes)?;
@@ -197,7 +193,7 @@ impl BufferPoolManager {
             let mut page_table = self.page_table.write();
             page_table.insert(page_id, frame_id);
             
-            self.replacer.write().record_access(frame_id);
+            // REMOVED: self.replacer.write().record_access(frame_id); // Page is pinned
         }
         
         // Return the page
@@ -233,7 +229,8 @@ impl BufferPoolManager {
             {
                 let mut page_guard = frame_guard.page.write();
                 *page_guard = Page::new(page_id);
-                self.disk_manager.page_manager().init_page(&mut page_guard);
+                // Use stateless PageManager by creating an instance
+                PageManager::new().init_page(&mut page_guard);
             }
             
             // Update frame metadata
@@ -246,7 +243,7 @@ impl BufferPoolManager {
             let mut page_table = self.page_table.write();
             page_table.insert(page_id, frame_id);
             
-            self.replacer.write().record_access(frame_id);
+            // REMOVED: self.replacer.write().record_access(frame_id); // Page is pinned
         }
         
         // Return the page

@@ -86,6 +86,7 @@ impl Column {
             crate::query::parser::ast::DataType::Boolean => DataType::Boolean,
             crate::query::parser::ast::DataType::Date => DataType::Date,
             crate::query::parser::ast::DataType::Timestamp => DataType::Timestamp,
+            crate::query::parser::ast::DataType::Time => DataType::Text, // Placeholder: Map Time to Text
         };
         
         let default_literal = if let Some(expr) = &col_def.default_value {

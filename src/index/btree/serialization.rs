@@ -237,7 +237,7 @@ mod tests {
         let deserialized = deserialize_node::<i32>(&page).unwrap();
         
         // Verify node structure
-        assert_eq!(deserialized.is_leaf, true);
+        assert!(deserialized.is_leaf);
         assert_eq!(deserialized.keys, vec![5, 10, 15, 20]);
         assert_eq!(deserialized.values, vec![
             Rid::new(0, 1005),
@@ -270,7 +270,7 @@ mod tests {
         let deserialized = deserialize_node::<i32>(&page).unwrap();
         
         // Verify node structure
-        assert_eq!(deserialized.is_leaf, false);
+        assert!(!deserialized.is_leaf);
         assert_eq!(deserialized.keys, vec![10, 20, 30]);
         assert_eq!(deserialized.children, vec![100, 200, 300, 400]);
         assert!(deserialized.values.is_empty());
@@ -296,7 +296,7 @@ mod tests {
         let deserialized = deserialize_node::<i32>(&page).unwrap();
         
         // Verify node structure
-        assert_eq!(deserialized.is_leaf, true);
+        assert!(deserialized.is_leaf);
         assert!(deserialized.keys.is_empty());
         assert!(deserialized.values.is_empty());
         assert!(deserialized.children.is_empty());
@@ -325,7 +325,7 @@ mod tests {
         let deserialized_node = deserialize_node::<i32>(&page).unwrap();
         
         // Check header values
-        assert_eq!(deserialized_node.is_leaf, true);
+        assert!(deserialized_node.is_leaf);
         assert_eq!(deserialized_node.keys.len(), 2);
         assert_eq!(deserialized_node.values, vec![Rid::new(0, 1001), Rid::new(0, 1002)]);
         assert_eq!(deserialized_node.next_leaf, Some(123));
@@ -353,7 +353,7 @@ mod tests {
         let deserialized_node = deserialize_node::<String>(&page).unwrap();
         
         // Check node structure
-        assert_eq!(deserialized_node.is_leaf, true);
+        assert!(deserialized_node.is_leaf);
         assert_eq!(deserialized_node.keys, vec!["apple".to_string(), "banana".to_string()]);
         assert_eq!(deserialized_node.values, vec![Rid::new(0, 2001), Rid::new(0, 2002)]);
         assert_eq!(deserialized_node.next_leaf, Some(789));

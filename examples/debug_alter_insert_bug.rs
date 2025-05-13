@@ -35,13 +35,11 @@ fn main() {
 
     let engine = ExecutionEngine::new(buffer_pool.clone(), catalog.clone(), transaction_manager.clone());
 
-    let queries = vec![
-        "CREATE TABLE test_alter_bug (id INT);",
+    let queries = ["CREATE TABLE test_alter_bug (id INT);",
         "INSERT INTO test_alter_bug (id) VALUES (1);",
         "ALTER TABLE test_alter_bug ADD COLUMN data TEXT;",
         "INSERT INTO test_alter_bug (id, data) VALUES (2, 'row2');",
-        "SELECT * FROM test_alter_bug;",
-    ];
+        "SELECT * FROM test_alter_bug;"];
 
     for (i, query_str) in queries.iter().enumerate() {
         println!("\\n--- Executing Query {}: {} ---", i + 1, query_str);

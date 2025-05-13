@@ -251,7 +251,7 @@ impl LogManager {
 impl Clone for LogManager {
     fn clone(&self) -> Self {
         let current_lsn = self.current_lsn.load(Ordering::SeqCst);
-        let is_flushing = self.is_flushing.lock().unwrap().clone();
+        let is_flushing = *self.is_flushing.lock().unwrap();
         
         Self {
             config: self.config.clone(),

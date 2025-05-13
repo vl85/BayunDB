@@ -47,6 +47,12 @@ pub struct Catalog {
     table_id_counter: AtomicU32,
 }
 
+impl Default for Catalog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Catalog {
     /// Get the global catalog instance
     pub fn instance() -> Arc<RwLock<Catalog>> {
@@ -108,16 +114,22 @@ impl Catalog {
     }
     
     /// Create a table in the current schema
-    pub fn create_table(&self, mut table: Table) -> Result<(), String> {
+    pub fn create_table(&self, mut table: Table) -> Result<(), QueryError> {
         let schema_name = self.current_schema.read().unwrap().clone();
         let mut schemas_guard = self.schemas.write().unwrap();
         
         if let Some(schema) = schemas_guard.get_mut(&schema_name) {
             let new_id = self.table_id_counter.fetch_add(1, Ordering::SeqCst);
             table.set_id(new_id);
-            schema.add_table(table)
+            schema.add_table(table.clone()).map_err(|e_str| {
+                if e_str.to_lowercase().contains("already exists") {
+                    QueryError::TableAlreadyExists(table.name().to_string())
+                } else {
+                    QueryError::CatalogError(e_str)
+                }
+            })
         } else {
-            Err(format!("Schema {} does not exist", schema_name))
+            Err(QueryError::SchemaNotFound(schema_name))
         }
     }
     
@@ -285,6 +297,7 @@ impl Catalog {
                     crate::query::parser::ast::DataType::Boolean => schema::DataType::Boolean,
                     crate::query::parser::ast::DataType::Date => schema::DataType::Date,
                     crate::query::parser::ast::DataType::Timestamp => schema::DataType::Timestamp,
+                    crate::query::parser::ast::DataType::Time => schema::DataType::Text, // Placeholder: Map Time to Text
                     // Add other types as they are supported
                 };
                 // The Table::alter_column_type method returns Result<(), String>

@@ -7,7 +7,6 @@ use anyhow::Result;
 use bayundb::storage::page::PageError;
 use bayundb::catalog::Catalog;
 use std::sync::RwLock;
-use bincode;
 use anyhow::anyhow;
 
 // Create a temporary database file for testing
@@ -98,12 +97,10 @@ pub fn create_test_table_with_data(buffer_pool: Arc<BufferPoolManager>) -> Resul
     let page_manager = PageManager::new();
     
     // Define test data columns
-    let columns = vec![
-        "id".to_string(),
+    let columns = ["id".to_string(),
         "name".to_string(),
         "value".to_string(),
-        "active".to_string(),
-    ];
+        "active".to_string()];
     
     // Create test data
     let test_data = vec![

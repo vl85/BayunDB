@@ -90,16 +90,16 @@ fn test_create_table_with_primary_key() {
     
     // Check primary key
     let id_col = table.get_column("id").unwrap();
-    assert_eq!(id_col.is_primary_key(), true);
-    assert_eq!(id_col.is_nullable(), false); // Primary keys can't be NULL
+    assert!(id_col.is_primary_key());
+    assert!(!id_col.is_nullable()); // Primary keys can't be NULL
     
     // Verify NOT NULL constraint is respected
     let name_col = table.get_column("name").unwrap();
-    assert_eq!(name_col.is_nullable(), false);
+    assert!(!name_col.is_nullable());
     
     // Verify default nullability for other columns
     let price_col = table.get_column("price").unwrap();
-    assert_eq!(price_col.is_nullable(), true);
+    assert!(price_col.is_nullable());
 }
 
 #[test]

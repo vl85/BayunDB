@@ -20,4 +20,20 @@ pub enum AggregateType {
     Max,
 }
 
+impl AggregateType {
+    /// Convert AST AggregateFunction to executor AggregateType
+    pub fn from_ast_function(ast_func: &crate::query::parser::ast::AggregateFunction) -> crate::query::executor::result::QueryResult<Self> { // Assuming QueryResult is accessible
+        match ast_func {
+            crate::query::parser::ast::AggregateFunction::Count => Ok(AggregateType::Count),
+            crate::query::parser::ast::AggregateFunction::Sum => Ok(AggregateType::Sum),
+            crate::query::parser::ast::AggregateFunction::Avg => Ok(AggregateType::Avg),
+            crate::query::parser::ast::AggregateFunction::Min => Ok(AggregateType::Min),
+            crate::query::parser::ast::AggregateFunction::Max => Ok(AggregateType::Max),
+            // Add handling for other potential AST aggregate variants if they exist, or return an error
+            // Example: 
+            // _ => Err(crate::query::executor::result::QueryError::ExecutionError(format!("Unsupported AST AggregateFunction: {:?}", ast_func)))
+        }
+    }
+}
+
 // Common utility functions for aggregate operators can be added here 

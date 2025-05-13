@@ -27,14 +27,16 @@ use std::sync::Arc;
 use crate::storage::buffer::BufferPoolManager;
 use crate::catalog::Catalog;
 use std::sync::RwLock;
+use crate::query::executor::operators::Operator;
 
 /// The Planner is responsible for translating SQL statements into executable query plans
 pub struct Planner {
     optimizer: Optimizer,
-    physical_optimizer: PhysicalOptimizer,
+    pub physical_optimizer: PhysicalOptimizer,
     operator_builder: OperatorBuilder,
     cost_model: CostModel,
     catalog: Arc<RwLock<Catalog>>,
+    buffer_pool: Arc<BufferPoolManager>,
 }
 
 impl Planner {
@@ -42,10 +44,11 @@ impl Planner {
     pub fn new(buffer_pool: Arc<BufferPoolManager>, catalog: Arc<RwLock<Catalog>>) -> Self {
         Planner {
             optimizer: Optimizer::new(),
-            physical_optimizer: PhysicalOptimizer::new(),
+            physical_optimizer: PhysicalOptimizer::new(catalog.clone()),
             operator_builder: OperatorBuilder::new(buffer_pool.clone(), catalog.clone()),
             cost_model: CostModel::new(),
-            catalog: catalog,
+            catalog,
+            buffer_pool,
         }
     }
     
@@ -69,7 +72,13 @@ impl Planner {
     /// Create a logical plan from a statement
     pub fn create_logical_plan(&self, stmt: &Statement) -> QueryResult<LogicalPlan> {
         match stmt {
-            Statement::Select(select_stmt) => Ok(logical::build_logical_plan(select_stmt, self.catalog.clone())),
+            Statement::Select(select_stmt) => {
+                // Build the initial logical plan from the SELECT statement
+                let plan = logical::build_logical_plan(select_stmt, self.catalog.clone());
+                
+                // Apply logical optimizations
+                Ok(self.optimizer.optimize(plan))
+            }
             Statement::Create(create_stmt) => Ok(LogicalPlan::CreateTable {
                 table_name: create_stmt.table_name.clone(),
                 columns: create_stmt.columns.clone(),
@@ -85,17 +94,17 @@ impl Planner {
     
     /// Create a physical plan from a logical plan
     pub fn create_physical_plan(&self, logical_plan: &LogicalPlan) -> QueryResult<PhysicalPlan> {
-        // Convert logical plan to a basic physical plan
-        let physical_plan = physical::create_physical_plan(logical_plan);
+        // Convert logical plan to physical plan using the function from physical.rs
+        let physical_plan = physical::create_physical_plan(logical_plan, self.catalog.clone(), self.buffer_pool.clone())?;
         
-        // Apply physical plan optimizations
+        // Apply physical optimizations
         let optimized_physical_plan = self.physical_optimizer.optimize(physical_plan);
         
         Ok(optimized_physical_plan)
     }
     
     /// Build an operator tree from a physical plan
-    pub fn build_operator_tree(&self, physical_plan: &PhysicalPlan) -> QueryResult<Arc<std::sync::Mutex<dyn crate::query::executor::operators::Operator + Send>>> {
+    pub fn build_operator_tree(&self, physical_plan: &PhysicalPlan) -> QueryResult<Arc<std::sync::Mutex<dyn Operator + Send + Sync>>> {
         self.operator_builder.build_operator_tree(physical_plan)
     }
     

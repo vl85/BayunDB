@@ -17,7 +17,7 @@ pub enum Statement {
 }
 
 /// SELECT statement representation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SelectStatement {
     /// Columns in SELECT clause
     pub columns: Vec<SelectColumn>,
@@ -31,10 +31,12 @@ pub struct SelectStatement {
     pub group_by: Option<Vec<Expression>>,
     /// HAVING clause (optional)
     pub having: Option<Box<Expression>>,
+    /// ORDER BY clause (optional)
+    pub order_by: Vec<(Expression, bool)>,
 }
 
 /// Column in a SELECT statement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SelectColumn {
     /// All columns (*)
     Wildcard,
@@ -55,21 +57,21 @@ pub struct ColumnReference {
 }
 
 /// Table reference in FROM clause
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableReference {
     pub name: String,
     pub alias: Option<String>,
 }
 
 /// JOIN clause representation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct JoinClause {
     /// The type of join
     pub join_type: JoinType,
     /// The table being joined
     pub table: TableReference,
     /// The join condition (ON clause)
-    pub condition: Box<Expression>,
+    pub condition: Option<Expression>,
 }
 
 /// Types of SQL JOINs
@@ -141,6 +143,19 @@ pub enum Expression {
         function: AggregateFunction,
         arg: Option<Box<Expression>>,
     },
+    /// CASE expression
+    Case {
+        /// Optional operand for simple CASE statements (e.g., CASE x WHEN 1 THEN ...)
+        /// If None, it's a searched CASE statement (e.g., CASE WHEN x = 1 THEN ...)
+        operand: Option<Box<Expression>>,
+        when_then_clauses: Vec<(Box<Expression>, Box<Expression>)>, // (condition_expr, result_expr)
+        else_clause: Option<Box<Expression>>,
+    },
+    /// IS NULL or IS NOT NULL expression
+    IsNull {
+        expr: Box<Expression>,
+        not: bool, // true for IS NOT NULL, false for IS NULL
+    },
 }
 
 impl fmt::Display for Expression {
@@ -173,6 +188,22 @@ impl fmt::Display for Expression {
                 } else {
                     write!(f, "{}(*)", func_name)
                 }
+            }
+            Expression::Case { operand, when_then_clauses, else_clause } => {
+                write!(f, "CASE")?;
+                if let Some(op_expr) = operand {
+                    write!(f, " {}", op_expr)?;
+                }
+                for (when_expr, then_expr) in when_then_clauses {
+                    write!(f, " WHEN {} THEN {}", when_expr, then_expr)?;
+                }
+                if let Some(el_expr) = else_clause {
+                    write!(f, " ELSE {}", el_expr)?;
+                }
+                write!(f, " END")
+            }
+            Expression::IsNull { expr, not } => {
+                write!(f, "({} IS {}NULL)", expr, if *not { "NOT " } else { "" })
             }
         }
     }
@@ -270,14 +301,16 @@ pub struct ColumnDef {
 }
 
 /// SQL data types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DataType {
     Integer,
     Float,
     Text,
     Boolean,
     Date,
+    Time,
     Timestamp,
+    // Future types: Interval, Blob, etc.
 }
 
 impl fmt::Display for DataType {
@@ -288,6 +321,7 @@ impl fmt::Display for DataType {
             DataType::Text => write!(f, "TEXT"),
             DataType::Boolean => write!(f, "BOOLEAN"),
             DataType::Date => write!(f, "DATE"),
+            DataType::Time => write!(f, "TIME"),
             DataType::Timestamp => write!(f, "TIMESTAMP"),
         }
     }
@@ -427,6 +461,7 @@ mod tests {
             joins: vec![],
             group_by: None,
             having: None,
+            order_by: Vec::new(),
         });
 
         // Verify it was constructed correctly
@@ -437,6 +472,7 @@ mod tests {
             assert!(select.joins.is_empty());
             assert!(select.group_by.is_none());
             assert!(select.having.is_none());
+            assert!(select.order_by.is_empty());
         } else {
             panic!("Expected SELECT statement");
         }
@@ -472,7 +508,7 @@ mod tests {
                         name: "orders".to_string(),
                         alias: Some("o".to_string()),
                     },
-                    condition: Box::new(Expression::BinaryOp {
+                    condition: Some(Expression::BinaryOp {
                         left: Box::new(Expression::Column(ColumnReference {
                             table: Some("u".to_string()),
                             name: "id".to_string(),
@@ -487,6 +523,7 @@ mod tests {
             ],
             group_by: None,
             having: None,
+            order_by: Vec::new(),
         });
 
         // Verify it was constructed correctly
@@ -501,11 +538,11 @@ mod tests {
             assert_eq!(join.table.alias, Some("o".to_string()));
             
             // Verify JOIN condition
-            match &*join.condition {
-                Expression::BinaryOp { op, .. } => {
+            match &join.condition {
+                Some(Expression::BinaryOp { op, .. }) => {
                     assert_eq!(*op, Operator::Equals);
                 },
-                _ => panic!("Expected binary operation in JOIN condition"),
+                _ => panic!("Expected Some(BinaryOp) in JOIN condition"),
             }
         } else {
             panic!("Expected SELECT statement");

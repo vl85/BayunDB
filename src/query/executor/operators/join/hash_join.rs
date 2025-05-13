@@ -112,7 +112,7 @@ impl HashJoin {
                     // Get the join key
                     if let Some(key) = row.get(&left_column) {
                         // Add the row to the hash table
-                        let entry = self.hash_table.entry(key.clone()).or_insert_with(Vec::new);
+                        let entry = self.hash_table.entry(key.clone()).or_default();
                         
                         // For LEFT JOIN, track all left rows
                         if self.is_left_join {

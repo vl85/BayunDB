@@ -88,20 +88,20 @@ fn test_create_table() {
         let id_col = table.get_column("id").unwrap();
         assert_eq!(id_col.name(), "id");
         assert_eq!(*id_col.data_type(), DataType::Integer);
-        assert_eq!(id_col.is_primary_key(), true);
-        assert_eq!(id_col.is_nullable(), false);
+        assert!(id_col.is_primary_key());
+        assert!(!id_col.is_nullable());
         
         // Check name column
         let name_col = table.get_column("name").unwrap();
         assert_eq!(name_col.name(), "name");
         assert_eq!(*name_col.data_type(), DataType::Text);
-        assert_eq!(name_col.is_nullable(), false);
+        assert!(!name_col.is_nullable());
         
         // Check salary column
         let salary_col = table.get_column("salary").unwrap();
         assert_eq!(salary_col.name(), "salary");
         assert_eq!(*salary_col.data_type(), DataType::Float);
-        assert_eq!(salary_col.is_nullable(), true);
+        assert!(salary_col.is_nullable());
     } else {
         panic!("Table 'employees' not found in catalog");
     }
@@ -294,12 +294,11 @@ fn test_scan_operator_uses_catalog() {
     use bayundb::query::executor::operators::Operator;
     use bayundb::storage::page::PageManager;
     
-    let page_manager = PageManager::new();
+    let _page_manager = PageManager::new();
     let mut scan_op = TableScanOperator::new(
         "dynamic_table".to_string(), 
-        "dt".to_string(), 
+        Some("dt".to_string()),
         buffer_pool.clone(),
-        page_manager,
         catalog_arc.clone()
     );
     
@@ -402,12 +401,11 @@ fn test_scan_operator_with_different_column_types() -> Result<()> {
     let page_manager_for_insert = PageManager::new();
     insert_test_data("all_types_table", data_to_insert.clone(), &buffer_pool, &page_manager_for_insert, &catalog_arc)?;
 
-    let page_manager_for_scan = PageManager::new();
+    let _page_manager_for_scan = PageManager::new();
     let mut scan_op = TableScanOperator::new(
         "all_types_table".to_string(), 
-        "t".to_string(), 
+        Some("t".to_string()),
         buffer_pool.clone(),
-        page_manager_for_scan, 
         catalog_arc.clone()
     );
     
@@ -515,12 +513,11 @@ fn test_scan_operator_returns_empty_result_for_empty_table() {
     use bayundb::query::executor::operators::Operator;
     use bayundb::storage::page::PageManager;
     
-    let page_manager = PageManager::new();
+    let _page_manager = PageManager::new();
     let mut scan_op = TableScanOperator::new(
         "empty_table".to_string(), 
-        "t".to_string(), 
+        Some("t".to_string()),
         buffer_pool.clone(),
-        page_manager,
         catalog_arc.clone()
     );
     scan_op.init().unwrap();
@@ -598,7 +595,7 @@ fn test_catalog_empty_table_direct_check() {
         let id_col = table.get_column("id").unwrap();
         assert_eq!(id_col.name(), "id");
         assert_eq!(*id_col.data_type(), DataType::Integer);
-        assert_eq!(id_col.is_primary_key(), true);
+        assert!(id_col.is_primary_key());
         
         // Check value column
         let value_col = table.get_column("value").unwrap();

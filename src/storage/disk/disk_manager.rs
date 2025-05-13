@@ -5,7 +5,6 @@ use parking_lot::Mutex;
 use thiserror::Error;
 
 use crate::common::types::{Page, PageId, PAGE_SIZE};
-use crate::storage::page::PageManager;
 
 const INVALID_PAGE_ID: PageId = 0;
 
@@ -20,7 +19,6 @@ pub enum DiskManagerError {
 /// DiskManager is responsible for handling the actual disk I/O operations
 pub struct DiskManager {
     db_file: Mutex<File>,
-    page_manager: PageManager,
 }
 
 impl DiskManager {
@@ -35,7 +33,6 @@ impl DiskManager {
         
         Ok(Self {
             db_file: Mutex::new(file),
-            page_manager: PageManager::new(),
         })
     }
     
@@ -51,19 +48,16 @@ impl DiskManager {
         {
             let mut file = self.db_file.lock();
             
-            // Check if the file is long enough to contain this page
             let file_size = file.metadata()
                 .map_err(DiskManagerError::IoError)?
                 .len();
                 
-            // If the file isn't long enough, initialize a new page
             if offset as u64 >= file_size {
                 page.page_id = page_id;
-                self.page_manager.init_page(page);
+                page.data = [0; PAGE_SIZE];
                 return Ok(());
             }
             
-            // Seek to the page location and read it
             file.seek(SeekFrom::Start(offset as u64))
                 .map_err(DiskManagerError::IoError)?;
                 
@@ -71,7 +65,6 @@ impl DiskManager {
                 .map_err(DiskManagerError::IoError)?;
         }
         
-        // Copy read data to the page
         page.data.copy_from_slice(&buffer);
         page.page_id = page_id;
         
@@ -103,15 +96,12 @@ impl DiskManager {
     pub fn allocate_page(&self) -> Result<PageId, DiskManagerError> {
         let mut file = self.db_file.lock();
         
-        // Get the current file size to determine the next page ID
         let file_size = file.metadata()
             .map_err(DiskManagerError::IoError)?
             .len();
             
-        // Calculate the new page ID (first page is 1, not 0)
         let new_page_id = (file_size / PAGE_SIZE as u64) as PageId + 1;
         
-        // Extend the file with a new page of zeros
         file.seek(SeekFrom::End(0))
             .map_err(DiskManagerError::IoError)?;
             
@@ -128,10 +118,5 @@ impl DiskManager {
     /// Calculate the offset of a page in the file
     fn page_offset(&self, page_id: PageId) -> usize {
         (page_id as usize - 1) * PAGE_SIZE
-    }
-    
-    /// Get a reference to the page manager
-    pub fn page_manager(&self) -> &PageManager {
-        &self.page_manager
     }
 } 

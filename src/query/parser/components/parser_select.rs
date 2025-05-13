@@ -57,6 +57,13 @@ pub fn parse_select(parser: &mut Parser) -> ParseResult<Statement> {
         None
     };
     
+    // Parse optional ORDER BY clause
+    let order_by = if parser.current_token_is(TokenType::ORDER) {
+        parse_order_by_clause(parser)?
+    } else {
+        Vec::new()
+    };
+    
     // Optional semicolon at the end
     if parser.current_token_is(TokenType::SEMICOLON) {
         parser.next_token();
@@ -69,6 +76,7 @@ pub fn parse_select(parser: &mut Parser) -> ParseResult<Statement> {
         joins,
         group_by,
         having,
+        order_by,
     }))
 }
 
@@ -81,7 +89,7 @@ fn parse_select_columns(parser: &mut Parser) -> ParseResult<Vec<SelectColumn>> {
             Some(token) => {
                 let token_type = token.token_type.clone();
                 match token_type {
-                    TokenType::MULTIPLY => {
+                    TokenType::ASTERISK => {
                         columns.push(SelectColumn::Wildcard);
                         parser.next_token();
                     }
@@ -217,16 +225,21 @@ fn parse_join_clause(parser: &mut Parser) -> ParseResult<JoinClause> {
     // Parse the table being joined
     let table = parse_table_reference(parser)?;
     
-    // Expect ON keyword
-    parser.expect_token(TokenType::ON)?;
-    
-    // Parse join condition
-    let condition = Box::new(parse_expression(parser, 0)?);
+    let condition = if parser.current_token_is(TokenType::ON) {
+        parser.expect_token(TokenType::ON)?; // Consume ON
+        Some(parse_expression(parser, 0)?) // Parse join condition
+    } else {
+        // For join types like CROSS JOIN, ON is not present. 
+        // Other join types might make it optional or mandatory based on SQL dialect.
+        // For now, if ON is not found, condition is None.
+        // A stricter parser might error here for INNER/LEFT/RIGHT/FULL JOINs if ON is missing.
+        None 
+    };
     
     Ok(JoinClause {
         join_type,
         table,
-        condition,
+        condition, // Changed from Box::new to Option
     })
 }
 
@@ -361,6 +374,36 @@ fn parse_optional_alias(parser: &mut Parser) -> ParseResult<Option<String>> {
     
     // No alias found
     Ok(None)
+}
+
+/// Parse an ORDER BY clause
+fn parse_order_by_clause(parser: &mut Parser) -> ParseResult<Vec<(Expression, bool)>> {
+    parser.expect_token(TokenType::ORDER)?;
+    parser.expect_token(TokenType::BY)?;
+
+    let mut order_expressions = Vec::new();
+
+    loop {
+        let expr = parse_expression(parser, 0)?;
+        let mut is_desc = false;
+
+        if parser.current_token_is(TokenType::ASC) {
+            parser.next_token(); // Consume ASC
+        } else if parser.current_token_is(TokenType::DESC) {
+            parser.next_token(); // Consume DESC
+            is_desc = true;
+        }
+
+        order_expressions.push((expr, is_desc));
+
+        if parser.current_token_is(TokenType::COMMA) {
+            parser.next_token(); // Consume comma
+        } else {
+            break; // No more expressions in ORDER BY
+        }
+    }
+
+    Ok(order_expressions)
 }
 
 #[cfg(test)]

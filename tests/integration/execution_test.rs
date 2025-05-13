@@ -9,7 +9,6 @@ use bayundb::storage::buffer::BufferPoolManager;
 use bayundb::storage::page::PageManager;
 use bayundb::query::parser::ast::{Expression, ColumnReference, Operator, Value};
 use std::sync::RwLock;
-use rand;
 use bayundb::transaction::concurrency::transaction_manager::TransactionManager;
 use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
 use bayundb::transaction::wal::log_buffer::LogBufferConfig;
@@ -225,7 +224,7 @@ fn test_scan_all_rows_with_engine() -> Result<()> {
         table_name
     );
     let create_result = engine.execute_query(&create_query)?;
-    assert!(create_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("created successfully"));
+    assert!(create_result.rows().first().unwrap().get("status").unwrap().to_string().contains("created successfully"));
 
     let num_rows_to_insert = 5;
     for i in 0..num_rows_to_insert {
@@ -237,13 +236,13 @@ fn test_scan_all_rows_with_engine() -> Result<()> {
             table_name, i, name_val, age_val, active_val
         );
         let insert_result = engine.execute_query(&insert_query)?;
-        assert!(insert_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("INSERT into"));
-        assert!(insert_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("successful"));
+        assert!(insert_result.rows().first().unwrap().get("status").unwrap().to_string().contains("INSERT into"));
+        assert!(insert_result.rows().first().unwrap().get("status").unwrap().to_string().contains("successful"));
     }
 
     let select_query_unordered = format!("SELECT id, name, age, active FROM {};", table_name);
     let result_set = engine.execute_query(&select_query_unordered)?;
-    let mut found_rows: Vec<Row> = result_set.rows().iter().cloned().collect();
+    let mut found_rows: Vec<Row> = result_set.rows().to_vec();
     
     found_rows.sort_by(|a, b| {
         let id_a = match a.get("id") { Some(DataValue::Integer(val)) => *val, _ => panic!("Row missing 'id' or not an integer: {:?}", a) };
@@ -327,13 +326,13 @@ fn test_update_rows_with_engine() -> Result<()> {
     let update_result = engine.execute_query(&update_query)?;
     // Assuming the engine returns a status message for UPDATE, like "UPDATE X rows affected"
     // For now, let's just check it doesn't error, specific row count can be asserted later if available
-    assert!(update_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("UPDATE"));
+    assert!(update_result.rows().first().unwrap().get("status").unwrap().to_string().contains("UPDATE"));
     // TODO: Assert number of rows affected if the engine provides this info.
 
     // Verify the updated data
     let select_query = format!("SELECT id, name, age, city FROM {};", table_name);
     let result_set = engine.execute_query(&select_query)?;
-    let mut updated_rows: Vec<Row> = result_set.rows().iter().cloned().collect();
+    let mut updated_rows: Vec<Row> = result_set.rows().to_vec();
     updated_rows.sort_by_key(|row| match row.get("id") { Some(DataValue::Integer(val)) => *val, _ => 0 });
 
     assert_eq!(updated_rows.len(), 4, "Should still have 4 rows after update");
@@ -436,13 +435,13 @@ fn test_delete_rows_with_engine() -> Result<()> {
         table_name
     );
     let delete_result = engine.execute_query(&delete_query)?;
-    assert!(delete_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("DELETE"));
+    assert!(delete_result.rows().first().unwrap().get("status").unwrap().to_string().contains("DELETE"));
     // TODO: Assert number of rows affected if the engine provides this info.
 
     // Verify the remaining data
     let select_query = format!("SELECT id, name, category FROM {};", table_name);
     let result_set = engine.execute_query(&select_query)?;
-    let mut remaining_rows: Vec<Row> = result_set.rows().iter().cloned().collect();
+    let mut remaining_rows: Vec<Row> = result_set.rows().to_vec();
     remaining_rows.sort_by_key(|row| match row.get("id") { Some(DataValue::Integer(val)) => *val, _ => 0 });
 
     assert_eq!(remaining_rows.len(), 3, "Should have 3 rows after deleting Vegetables");
@@ -461,7 +460,7 @@ fn test_delete_rows_with_engine() -> Result<()> {
     // Test deleting all remaining rows
     let delete_all_query = format!("DELETE FROM {};", table_name);
     let delete_all_result = engine.execute_query(&delete_all_query)?;
-    assert!(delete_all_result.rows().get(0).unwrap().get("status").unwrap().to_string().contains("DELETE"));
+    assert!(delete_all_result.rows().first().unwrap().get("status").unwrap().to_string().contains("DELETE"));
 
     let select_after_delete_all_query = format!("SELECT id FROM {};", table_name);
     let result_set_after_delete_all = engine.execute_query(&select_after_delete_all_query)?;

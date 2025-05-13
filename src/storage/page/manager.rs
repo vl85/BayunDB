@@ -5,13 +5,24 @@ use crate::storage::page::header::PageHeader;
 use crate::storage::page::error::PageError;
 use crate::storage::page::layout::{HEADER_SIZE, RECORD_OFFSET_SIZE, RecordLocation, PAGE_CONSTANTS};
 
+// Remove Arc and BufferPoolManager imports if no longer needed after removing bpm field
+// use std::sync::Arc;
+// use crate::storage::buffer::BufferPoolManager;
+
 pub struct PageManager {
     // Records location are stored from the end of the page
     // actual record data is stored from the beginning of the page (after the header)
+    // bpm: Arc<BufferPoolManager>, // REMOVED BufferPoolManager field
+}
+
+impl Default for PageManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PageManager {
-    pub fn new() -> Self {
+    pub fn new() -> Self { // Updated constructor, takes no arguments
         Self {}
     }
 

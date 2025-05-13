@@ -3,142 +3,80 @@
 // This module implements the projection operator for selecting specific columns.
 
 use std::sync::{Arc, Mutex};
+// std::io::Write; // Removed
 
 use crate::query::executor::operators::Operator;
-use crate::query::executor::result::{Row, QueryResult, QueryError, DataValue};
+use crate::query::executor::result::{Row, QueryResult};
+use crate::query::parser::ast::Expression;
+use linked_hash_map::LinkedHashMap; // For preserving column order
+use crate::query::executor::expression_eval;
 
 /// Projection operator that selects specific columns from input rows
 pub struct ProjectionOperator {
     /// The input operator
-    input: Arc<Mutex<dyn Operator + Send>>,
-    /// The columns to project (output names)
-    columns: Vec<String>,
-    /// Alias of the input operator, used to find columns in the input row
-    input_alias: String,
-    /// Whether the operator is initialized
-    initialized: bool,
+    input: Arc<Mutex<dyn Operator + Send + Sync>>,
+    /// The expressions to project (output names)
+    expressions: Vec<(Expression, String)>,
 }
 
 impl ProjectionOperator {
     /// Create a new projection operator
-    pub fn new(input: Arc<Mutex<dyn Operator + Send>>, columns: Vec<String>, input_alias: String) -> Self {
-        ProjectionOperator {
-            input,
-            columns,
-            input_alias,
-            initialized: false,
-        }
-    }
-    
-    /// Project a row to only include the specified columns
-    fn project_row(&self, input_row: Row) -> Row {
-        // eprintln!("[PROJECT_ROW START] Input Row: {:?}, Self.Columns: {:?}, Self.InputAlias: '{}'", input_row, self.columns, self.input_alias);
-        let mut projected_row = Row::new();
-        
-        if self.columns.is_empty() || self.columns.contains(&"*".to_string()) {
-            // eprintln!("[PROJECT_ROW] Handling SELECT * case or empty columns.");
-            return input_row;
-        }
-        
-        for output_col_name in &self.columns {
-            // eprintln!("[PROJECT_ROW] Processing output column: '{}'", output_col_name);
-            let qualified_input_col_name = format!("{}.{}", self.input_alias, output_col_name);
-            
-            let mut found_value: Option<DataValue> = None;
-
-            if !self.input_alias.is_empty() {
-                // eprintln!("[PROJECT_ROW] Trying qualified name: '{}'", qualified_input_col_name);
-                if let Some(value) = input_row.get(&qualified_input_col_name) {
-                    // eprintln!("[PROJECT_ROW] Found with qualified name. Value: {:?}", value);
-                    found_value = Some(value.clone());
-                }
-            }
-
-            if found_value.is_none() {
-                // eprintln!("[PROJECT_ROW] Trying direct name: '{}'", output_col_name);
-                if let Some(value) = input_row.get(output_col_name) {
-                    // eprintln!("[PROJECT_ROW] Found with direct name. Value: {:?}", value);
-                    found_value = Some(value.clone());
-                }
-            }
-            
-            if let Some(value_to_set) = found_value {
-                projected_row.set(output_col_name.clone(), value_to_set);
-            } else {
-                // eprintln!("[PROJECT_ROW] Column '{}' (or its qualified version) NOT FOUND in input row. Setting to Null.", output_col_name);
-                projected_row.set(output_col_name.clone(), DataValue::Null);
-            }
-        }
-        // eprintln!("[PROJECT_ROW END] Projected Row: {:?}", projected_row);
-        projected_row
+    pub fn new(input: Arc<Mutex<dyn Operator + Send + Sync>>, expressions: Vec<(Expression, String)>) -> Self {
+        ProjectionOperator { input, expressions }
     }
 }
 
 impl Operator for ProjectionOperator {
     /// Initialize the operator
     fn init(&mut self) -> QueryResult<()> {
-        // Initialize the input operator
-        {
-            let mut input = self.input.lock().map_err(|e| {
-                QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
-            })?;
-            
-            input.init()?;
-        }
-        
-        self.initialized = true;
-        Ok(())
+        self.input.lock().unwrap().init()
     }
     
     /// Get the next row with projected columns
     fn next(&mut self) -> QueryResult<Option<Row>> {
-        if !self.initialized {
-            return Err(QueryError::ExecutionError("Operator not initialized".to_string()));
-        }
-        
-        // Get the next row from the input
-        let next_row = {
-            let mut input = self.input.lock().map_err(|e| {
-                QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
-            })?;
-            
-            input.next()?
-        };
-        
-        // If there's a row, project it
-        match next_row {
-            Some(row) => Ok(Some(self.project_row(row))),
+        match self.input.lock().unwrap().next()? {
+            Some(input_row) => {
+                let mut output_values = LinkedHashMap::with_capacity(self.expressions.len());
+                let mut column_order = Vec::with_capacity(self.expressions.len());
+
+                for (expr, output_name) in &self.expressions {
+                    // HACK: Pass None for schema. Expression evaluation needs to handle this.
+                    let value = expression_eval::evaluate_expression(expr, &input_row, None)?;
+                    output_values.insert(output_name.clone(), value);
+                    column_order.push(output_name.clone());
+                }
+                Ok(Some(Row::from_ordered_map(output_values, column_order)))
+            }
             None => Ok(None),
         }
     }
     
     /// Close the operator
     fn close(&mut self) -> QueryResult<()> {
-        self.initialized = false;
-        
-        // Close the input operator
-        let mut input = self.input.lock().map_err(|e| {
-            QueryError::ExecutionError(format!("Failed to lock input operator: {}", e))
-        })?;
-        
-        input.close()
+        self.input.lock().unwrap().close()
     }
 }
 
 /// Create a projection operator
 pub fn create_projection(
-    input: Arc<Mutex<dyn Operator + Send>>,
+    input: Arc<Mutex<dyn Operator + Send + Sync>>,
     columns: Vec<String>,
-    input_alias: String,
-) -> QueryResult<Arc<Mutex<dyn Operator + Send>>> {
-    let projection = ProjectionOperator::new(input, columns, input_alias);
-    Ok(Arc::new(Mutex::new(projection)))
+    _input_alias: String,
+) -> QueryResult<Arc<Mutex<dyn Operator + Send + Sync>>> {
+    // For now, assume columns are simple column names from the input. 
+    // A proper implementation needs to take Vec<(Expression, String)> from logical plan.
+    let expressions: Vec<(Expression, String)> = columns.into_iter()
+        .map(|name| (Expression::Column(crate::query::parser::ast::ColumnReference { table: None, name: name.clone() }), name))
+        .collect();
+    
+    let op = ProjectionOperator::new(input, expressions);
+    Ok(Arc::new(Mutex::new(op)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::executor::result::DataValue;
+    use crate::query::executor::result::{DataValue, QueryError};
     
     // Mock operator for testing
     struct MockOperator {
@@ -208,7 +146,7 @@ mod tests {
         
         // Create a projection operator with selected columns
         let columns = vec!["id".to_string(), "name".to_string()];
-        let mut projection_op = ProjectionOperator::new(mock_op_arc, columns, "mock_input".to_string());
+        let mut projection_op = ProjectionOperator::new(mock_op_arc, columns.into_iter().map(|name| (Expression::Column(crate::query::parser::ast::ColumnReference { table: None, name: name.clone() }), name)).collect());
         
         // Initialize and test
         projection_op.init().unwrap();

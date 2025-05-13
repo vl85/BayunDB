@@ -252,14 +252,14 @@ impl LogFileManager {
     pub fn find_max_lsn(file: &mut File, start_position: u64) -> Result<u64> {
         // Seek to the starting position (after the header)
         file.seek(SeekFrom::Start(start_position))
-            .map_err(|e| LogFileError::IoError(e))?;
+            .map_err(LogFileError::IoError)?;
         
         let mut max_lsn = 0;
         let mut current_position = start_position;
         
         // Read the file size
         let file_size = file.metadata()
-            .map_err(|e| LogFileError::IoError(e))?
+            .map_err(LogFileError::IoError)?
             .len();
         
         // If the file only contains the header, there are no records
@@ -276,7 +276,7 @@ impl LogFileManager {
                     let record_size = u32::from_le_bytes(size_bytes) as usize;
                     
                     // Validate record size to prevent malformed records
-                    if record_size < 8 || record_size > 1024 * 1024 {
+                    if !(8..=1024 * 1024).contains(&record_size) {
                         // Invalid record size, break and return current max LSN
                         break;
                     }
@@ -415,11 +415,11 @@ impl LogFileManager {
             let mut file = OpenOptions::new()
                 .read(true)
                 .open(&path)
-                .map_err(|e| LogFileError::IoError(e))?;
+                .map_err(LogFileError::IoError)?;
             
             // Read the header to get the first LSN
             let header = LogFileHeader::read_from(&mut file)
-                .map_err(|e| LogFileError::IoError(e))?;
+                .map_err(LogFileError::IoError)?;
             
             // Validate the header
             if !header.validate() {
@@ -432,7 +432,7 @@ impl LogFileManager {
                 if let Some((next_seq, _)) = log_files.iter().find(|(seq, _)| *seq > sequence) {
                     // Find the max LSN in this file
                     let file_size = file.metadata()
-                        .map_err(|e| LogFileError::IoError(e))?
+                        .map_err(LogFileError::IoError)?
                         .len();
                     
                     // If this is not just a header (means there are records in the file)
@@ -441,7 +441,7 @@ impl LogFileManager {
                         let mut temp_file = OpenOptions::new()
                             .read(true)
                             .open(&path)
-                            .map_err(|e| LogFileError::IoError(e))?;
+                            .map_err(LogFileError::IoError)?;
                         
                         // Find the max LSN in this file
                         let max_lsn = Self::find_max_lsn(&mut temp_file, header.header_size as u64)?;

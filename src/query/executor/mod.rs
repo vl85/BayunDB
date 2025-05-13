@@ -7,6 +7,7 @@
 pub mod engine;
 pub mod result;
 pub mod operators;
+pub mod expression_eval;
 
 // Export key types
 pub use self::engine::ExecutionEngine;

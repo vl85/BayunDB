@@ -20,8 +20,8 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<Statement> {
     let table_name = parser.parse_identifier()?;
     
     // Parse column list (optional)
-    let columns = if parser.current_token_is(TokenType::LeftParen) {
-        parser.next_token(); // Consume left paren
+    let columns = if parser.current_token_is(TokenType::LPAREN) {
+        parser.next_token(); // Consume LPAREN
         
         let mut cols = Vec::new();
         
@@ -35,7 +35,7 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<Statement> {
         }
         
         // Expect closing parenthesis
-        parser.expect_token(TokenType::RightParen)?;
+        parser.expect_token(TokenType::RPAREN)?;
         
         Some(cols)
     } else {
@@ -46,7 +46,7 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<Statement> {
     parser.expect_token(TokenType::VALUES)?;
     
     // Parse values list
-    parser.expect_token(TokenType::LeftParen)?;
+    parser.expect_token(TokenType::LPAREN)?;
     
     let mut values = Vec::new();
     
@@ -60,7 +60,7 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<Statement> {
     }
     
     // Expect closing parenthesis
-    parser.expect_token(TokenType::RightParen)?;
+    parser.expect_token(TokenType::RPAREN)?;
     
     // Optional semicolon
     if parser.current_token_is(TokenType::SEMICOLON) {
@@ -90,7 +90,7 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<Statement> {
     
     // Parse first assignment
     let column = parser.parse_identifier()?;
-    parser.expect_token(TokenType::EQUALS)?;
+    parser.expect_token(TokenType::ASSIGN)?;
     let value = parse_expression(parser, 0)?;
     
     assignments.push(Assignment { column, value });
@@ -100,7 +100,7 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<Statement> {
         parser.next_token(); // Consume comma
         
         let column = parser.parse_identifier()?;
-        parser.expect_token(TokenType::EQUALS)?;
+        parser.expect_token(TokenType::ASSIGN)?;
         let value = parse_expression(parser, 0)?;
         
         assignments.push(Assignment { column, value });

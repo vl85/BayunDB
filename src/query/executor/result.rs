@@ -8,9 +8,12 @@ use std::cmp::{Ordering, Eq};
 use std::hash::{Hash, Hasher};
 use serde;
 use thiserror::Error;
+use hex;
+use linked_hash_map::LinkedHashMap;
 
 use crate::query::parser::components::ParseError;
 use crate::storage::page::PageError;
+use crate::storage::buffer::BufferPoolError;
 
 /// Possible data types for values in a row
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -20,35 +23,24 @@ pub enum DataValue {
     Float(f64),
     Text(String),
     Boolean(bool),
+    Date(String),
+    Timestamp(String),
+    Blob(Vec<u8>),
 }
 
 impl Eq for DataValue {}
 
 impl Hash for DataValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Add a type discriminant first to avoid collisions between different types
         match self {
-            DataValue::Null => {
-                0.hash(state);
-            }
-            DataValue::Integer(i) => {
-                1.hash(state);
-                i.hash(state);
-            }
-            DataValue::Float(f) => {
-                2.hash(state);
-                // Handle NaN and -0.0 special cases
-                let bits = f.to_bits();
-                bits.hash(state);
-            }
-            DataValue::Text(s) => {
-                3.hash(state);
-                s.hash(state);
-            }
-            DataValue::Boolean(b) => {
-                4.hash(state);
-                b.hash(state);
-            }
+            DataValue::Null => 0.hash(state),
+            DataValue::Integer(i) => { 1.hash(state); i.hash(state); }
+            DataValue::Float(f) => { 2.hash(state); f.to_bits().hash(state); }
+            DataValue::Text(s) => { 3.hash(state); s.hash(state); }
+            DataValue::Boolean(b) => { 4.hash(state); b.hash(state); }
+            DataValue::Date(s) => { 5.hash(state); s.hash(state); }
+            DataValue::Timestamp(s) => { 6.hash(state); s.hash(state); }
+            DataValue::Blob(b) => { 7.hash(state); b.hash(state); }
         }
     }
 }
@@ -61,6 +53,9 @@ impl fmt::Display for DataValue {
             DataValue::Float(fl) => write!(f, "{}", fl),
             DataValue::Text(s) => write!(f, "\"{}\"", s),
             DataValue::Boolean(b) => write!(f, "{}", b),
+            DataValue::Date(s) => write!(f, "DATE '{}'", s),
+            DataValue::Timestamp(s) => write!(f, "TIMESTAMP '{}'", s),
+            DataValue::Blob(b) => write!(f, "BLOB ({} bytes)", b.len()),
         }
     }
 }
@@ -68,32 +63,30 @@ impl fmt::Display for DataValue {
 impl PartialOrd for DataValue {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
-            // Define an ordering for NULLs: NULLS FIRST
             (DataValue::Null, DataValue::Null) => Some(Ordering::Equal),
-            (DataValue::Null, _) => Some(Ordering::Less),    // Null is less than any non-null value
-            (_, DataValue::Null) => Some(Ordering::Greater), // Any non-null value is greater than null
+            (DataValue::Null, _) => Some(Ordering::Less),
+            (_, DataValue::Null) => Some(Ordering::Greater),
             
-            // Compare integers
             (DataValue::Integer(a), DataValue::Integer(b)) => a.partial_cmp(b),
-            
-            // Compare floats
             (DataValue::Float(a), DataValue::Float(b)) => a.partial_cmp(b),
-            
-            // Integer and float can be compared
             (DataValue::Integer(a), DataValue::Float(b)) => (*a as f64).partial_cmp(b),
             (DataValue::Float(a), DataValue::Integer(b)) => a.partial_cmp(&(*b as f64)),
-            
-            // Compare strings
-            (DataValue::Text(a), DataValue::Text(b)) => {
-                // This is already correct for lexicographical comparison
-                Some(a.cmp(b))
-            }
-            
-            // Compare booleans (false < true)
+            (DataValue::Text(a), DataValue::Text(b)) => Some(a.cmp(b)),
             (DataValue::Boolean(a), DataValue::Boolean(b)) => a.partial_cmp(b),
+            (DataValue::Date(a), DataValue::Date(b)) => Some(a.cmp(b)), 
+            (DataValue::Timestamp(a), DataValue::Timestamp(b)) => Some(a.cmp(b)),
+            (DataValue::Blob(_), DataValue::Blob(_)) => None, // Blobs are typically not ordered beyond equality
+
+            // Comparing Text with Date/Timestamp (assuming string representations)
+            (DataValue::Text(a), DataValue::Date(b)) => Some(a.cmp(b)),
+            (DataValue::Date(a), DataValue::Text(b)) => Some(a.cmp(b)),
+            (DataValue::Text(a), DataValue::Timestamp(b)) => Some(a.cmp(b)),
+            (DataValue::Timestamp(a), DataValue::Text(b)) => Some(a.cmp(b)),
             
-            // Different non-numeric types are incomparable
-            // (e.g., Text vs Boolean, unless one is an Integer/Float comparison)
+            // Add other cross-type comparisons if necessary, e.g., Date vs Timestamp
+            (DataValue::Date(a), DataValue::Timestamp(b)) => Some(a.as_str().cmp(b.split(' ').next().unwrap_or(""))),
+            (DataValue::Timestamp(a), DataValue::Date(b)) => Some(a.split(' ').next().unwrap_or("").cmp(b.as_str())),
+
             _ => None,
         }
     }
@@ -102,30 +95,37 @@ impl PartialOrd for DataValue {
 impl DataValue {
     pub fn get_type(&self) -> crate::query::parser::ast::DataType {
         match self {
-            DataValue::Null => crate::query::parser::ast::DataType::Text, // Or a special "NullType"
+            DataValue::Null => crate::query::parser::ast::DataType::Text, 
             DataValue::Integer(_) => crate::query::parser::ast::DataType::Integer,
             DataValue::Float(_) => crate::query::parser::ast::DataType::Float,
             DataValue::Text(_) => crate::query::parser::ast::DataType::Text,
             DataValue::Boolean(_) => crate::query::parser::ast::DataType::Boolean,
+            DataValue::Date(_) => crate::query::parser::ast::DataType::Date,
+            DataValue::Timestamp(_) => crate::query::parser::ast::DataType::Timestamp,
+            DataValue::Blob(_) => crate::query::parser::ast::DataType::Text, // Placeholder for AST Blob type
         }
     }
 
     pub fn is_compatible_with(&self, target_ast_type: &crate::query::parser::ast::DataType) -> bool {
         match self {
-            DataValue::Null => true, // Null is compatible with any nullable column
-            DataValue::Integer(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Integer | crate::query::parser::ast::DataType::Float),
-            DataValue::Float(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Float | crate::query::parser::ast::DataType::Integer),
+            DataValue::Null => true, 
+            DataValue::Integer(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Integer | crate::query::parser::ast::DataType::Float | crate::query::parser::ast::DataType::Text),
+            DataValue::Float(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Float | crate::query::parser::ast::DataType::Integer | crate::query::parser::ast::DataType::Text),
             DataValue::Text(s) => {
                 match target_ast_type {
                     crate::query::parser::ast::DataType::Text => true,
                     crate::query::parser::ast::DataType::Integer => s.parse::<i64>().is_ok(),
                     crate::query::parser::ast::DataType::Float => s.parse::<f64>().is_ok(),
-                    crate::query::parser::ast::DataType::Boolean => s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false"),
-                    // Add other types like Date, Timestamp if they become parseable from Text
-                    _ => false,
+                    crate::query::parser::ast::DataType::Boolean => s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") || s.parse::<i64>().is_ok_and(|v| v == 0 || v == 1),
+                    crate::query::parser::ast::DataType::Date => true, 
+                    crate::query::parser::ast::DataType::Timestamp => true,
+                    crate::query::parser::ast::DataType::Time => true, 
                 }
             },
-            DataValue::Boolean(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Boolean | crate::query::parser::ast::DataType::Text),
+            DataValue::Boolean(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Boolean | crate::query::parser::ast::DataType::Text | crate::query::parser::ast::DataType::Integer),
+            DataValue::Date(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Date | crate::query::parser::ast::DataType::Text | crate::query::parser::ast::DataType::Timestamp),
+            DataValue::Timestamp(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Timestamp | crate::query::parser::ast::DataType::Text | crate::query::parser::ast::DataType::Date),
+            DataValue::Blob(_) => matches!(target_ast_type, crate::query::parser::ast::DataType::Text), // Blob might be compatible with Text via hex representation
         }
     }
 
@@ -146,6 +146,41 @@ impl DataValue {
             )));
         }
         Ok(values)
+    }
+
+    /// Compare two DataValues for sorting purposes.
+    /// Handles NULLs (NULLs are considered less than any non-NULL value).
+    /// Returns Ordering or QueryError for incompatible types.
+    pub fn compare(&self, other: &Self) -> QueryResult<Ordering> {
+        match (self, other) {
+            (DataValue::Null, DataValue::Null) => Ok(Ordering::Equal),
+            (DataValue::Null, _) => Ok(Ordering::Less), // Nulls first
+            (_, DataValue::Null) => Ok(Ordering::Greater),
+            // Non-null comparisons delegate to partial_cmp
+            (a, b) => a.partial_cmp(b).ok_or_else(|| 
+                QueryError::TypeError(format!("Cannot compare incompatible types: {:?} and {:?}", a.get_type(), b.get_type()))
+            )
+        }
+    }
+
+    pub fn to_sql_literal_for_error(&self) -> String {
+        match self {
+            DataValue::Null => "NULL".to_string(),
+            DataValue::Integer(i) => i.to_string(),
+            DataValue::Float(f) => f.to_string(),
+            DataValue::Text(s) => format!("'{}'", s.replace("'", "''")), // Single quotes, escape internal single quotes
+            DataValue::Boolean(b) => if *b { "TRUE" } else { "FALSE" }.to_string(), // Match common SQL boolean literals
+            DataValue::Date(s) => format!("'{}'", s), // Dates are often quoted
+            DataValue::Timestamp(s) => format!("'{}'", s), // Timestamps often quoted
+            DataValue::Blob(b) => format!("X'{}'", hex::encode(b)), // Standard SQL hex blob literal
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            DataValue::Boolean(b) => Some(*b),
+            _ => None,
+        }
     }
 }
 
@@ -179,6 +214,12 @@ impl PartialEq for Row {
 
 impl Eq for Row {}
 
+impl Default for Row {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Row {
     /// Create a new empty row
     pub fn new() -> Self {
@@ -198,6 +239,16 @@ impl Row {
         }
         
         row
+    }
+    
+    /// Create a row from an ordered map and explicit column order
+    pub fn from_ordered_map(values: LinkedHashMap<String, DataValue>, column_order: Vec<String>) -> Self {
+        // Convert LinkedHashMap to HashMap for storage
+        let values_hashmap: HashMap<String, DataValue> = values.into_iter().collect();
+        Row {
+            values: values_hashmap,
+            column_order,
+        }
     }
     
     /// Get a value by column name
@@ -255,6 +306,9 @@ pub enum QueryError {
     /// Schema not found
     #[error("Schema not found: {0}")]
     SchemaNotFound(String),
+    /// Table already exists
+    #[error("Table already exists: {0}")]
+    TableAlreadyExists(String),
     /// Duplicate column
     #[error("Duplicate column: {0}")]
     DuplicateColumn(String),
@@ -267,6 +321,12 @@ pub enum QueryError {
     /// Invalid operation
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+    /// Numeric overflow
+    #[error("Numeric overflow")]
+    NumericOverflow,
+    /// Division by zero
+    #[error("Division by zero")]
+    DivisionByZero,
 }
 
 // Implement From<ParseError> for QueryError
@@ -280,6 +340,13 @@ impl From<ParseError> for QueryError {
 impl From<PageError> for QueryError {
     fn from(err: PageError) -> Self {
         QueryError::StorageError(format!("Page error: {:?}", err))
+    }
+}
+
+// Add this From implementation
+impl From<BufferPoolError> for QueryError {
+    fn from(err: BufferPoolError) -> Self {
+        QueryError::StorageError(format!("Buffer pool error: {}", err))
     }
 }
 
@@ -340,7 +407,7 @@ impl QueryResultSet {
         result.push('\n');
         
         // Add separator
-        result.push_str("|");
+        result.push('|');
         for col in &self.columns {
             result.push_str(&format!("{}|", "-".repeat(col.len() + 2)));
         }
@@ -393,6 +460,9 @@ pub fn convert_data_value(
                 .map(DataValue::Integer)
                 .map_err(|e| QueryError::TypeError(format!("Cannot convert Text '{}' to Integer: {}", s, e))),
             DataValue::Boolean(b) => Ok(DataValue::Integer(if *b { 1 } else { 0 })),
+            DataValue::Date(s) => Err(QueryError::TypeError(format!("Cannot convert Date '{}' to Integer", s))),
+            DataValue::Timestamp(s) => Err(QueryError::TypeError(format!("Cannot convert Timestamp '{}' to Integer", s))),
+            DataValue::Blob(_) => Err(QueryError::TypeError("Cannot convert Blob to Integer".to_string())),
         },
         crate::catalog::schema::DataType::Float => match value {
             DataValue::Null => Ok(DataValue::Null),
@@ -402,6 +472,9 @@ pub fn convert_data_value(
                 .map(DataValue::Float)
                 .map_err(|e| QueryError::TypeError(format!("Cannot convert Text '{}' to Float: {}", s, e))),
             DataValue::Boolean(b) => Ok(DataValue::Float(if *b { 1.0 } else { 0.0 })),
+            DataValue::Date(s) => Err(QueryError::TypeError(format!("Cannot convert Date '{}' to Float", s))),
+            DataValue::Timestamp(s) => Err(QueryError::TypeError(format!("Cannot convert Timestamp '{}' to Float", s))),
+            DataValue::Blob(_) => Err(QueryError::TypeError("Cannot convert Blob to Float".to_string())),
         },
         crate::catalog::schema::DataType::Text => match value {
             DataValue::Null => Ok(DataValue::Null),
@@ -409,11 +482,14 @@ pub fn convert_data_value(
             DataValue::Float(f) => Ok(DataValue::Text(f.to_string())),
             DataValue::Text(s) => Ok(DataValue::Text(s.clone())),
             DataValue::Boolean(b) => Ok(DataValue::Text(b.to_string())),
+            DataValue::Date(s) => Ok(DataValue::Text(s.clone())),
+            DataValue::Timestamp(s) => Ok(DataValue::Text(s.clone())),
+            DataValue::Blob(b) => Ok(DataValue::Text(hex::encode(b))), // Example: Convert Blob to hex String
         },
         crate::catalog::schema::DataType::Boolean => match value {
             DataValue::Null => Ok(DataValue::Null),
             DataValue::Integer(i) => Ok(DataValue::Boolean(*i != 0)),
-            DataValue::Float(f) => Ok(DataValue::Boolean(*f != 0.0)), // Consider precision for float to bool
+            DataValue::Float(f) => Ok(DataValue::Boolean(*f != 0.0)),
             DataValue::Text(s) => {
                 if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("t") || s.eq_ignore_ascii_case("1") {
                     Ok(DataValue::Boolean(true))
@@ -424,19 +500,32 @@ pub fn convert_data_value(
                 }
             },
             DataValue::Boolean(b) => Ok(DataValue::Boolean(*b)),
+            DataValue::Date(s) => Err(QueryError::TypeError(format!("Cannot convert Date '{}' to Boolean", s))),
+            DataValue::Timestamp(s) => Err(QueryError::TypeError(format!("Cannot convert Timestamp '{}' to Boolean", s))),
+            DataValue::Blob(_) => Err(QueryError::TypeError("Cannot convert Blob to Boolean".to_string())),
         },
-        crate::catalog::schema::DataType::Date | crate::catalog::schema::DataType::Timestamp | crate::catalog::schema::DataType::Blob => {
-            // DataValue does not yet support these types directly.
-            // If the source is Null, it can be Null in the target.
-            if matches!(value, DataValue::Null) {
-                Ok(DataValue::Null)
-            } else {
-                 Err(QueryError::TypeError(format!(
-                    "Conversion from {:?} to catalog type {:?} is not supported by DataValue yet.", 
-                    value, target_catalog_type
-                )))
-            }
-        }
+        crate::catalog::schema::DataType::Date => match value {
+            DataValue::Null => Ok(DataValue::Null),
+            DataValue::Text(s) => Ok(DataValue::Date(s.clone())), // Assume text is valid date string
+            DataValue::Date(s) => Ok(DataValue::Date(s.clone())),
+            DataValue::Timestamp(ts) => Ok(DataValue::Date(ts.split(' ').next().unwrap_or_default().to_string())),
+            _ => Err(QueryError::TypeError(format!("Cannot convert {:?} to Date", value))),
+        },
+        crate::catalog::schema::DataType::Timestamp => match value {
+            DataValue::Null => Ok(DataValue::Null),
+            DataValue::Text(s) => Ok(DataValue::Timestamp(s.clone())), // Assume text is valid timestamp string
+            DataValue::Date(s) => Ok(DataValue::Timestamp(format!("{} 00:00:00", s))),
+            DataValue::Timestamp(ts) => Ok(DataValue::Timestamp(ts.clone())),
+            _ => Err(QueryError::TypeError(format!("Cannot convert {:?} to Timestamp", value))),
+        },
+        crate::catalog::schema::DataType::Blob => match value {
+            DataValue::Null => Ok(DataValue::Null),
+            DataValue::Blob(b) => Ok(DataValue::Blob(b.clone())),
+            DataValue::Text(s) => hex::decode(s) // Attempt to decode hex string to Vec<u8>
+                .map(DataValue::Blob)
+                .map_err(|e| QueryError::TypeError(format!("Cannot convert Text '{}' to Blob (hex decode failed): {}", s, e))),
+            _ => Err(QueryError::TypeError(format!("Cannot convert {:?} to Blob", value))),
+        },
     }
 }
 
@@ -480,7 +569,7 @@ mod tests {
         assert_eq!(result_set.columns(), &["id", "name"]);
         
         // Check first row values
-        if let Some(row) = result_set.rows().get(0) {
+        if let Some(row) = result_set.rows().first() {
             assert_eq!(row.get("id"), Some(&DataValue::Integer(1)));
             assert_eq!(row.get("name"), Some(&DataValue::Text("John".to_string())));
         } else {

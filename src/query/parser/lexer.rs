@@ -9,74 +9,42 @@ use std::str::Chars;
 /// SQL Token types
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
-    // Keywords
-    SELECT,
-    FROM,
-    WHERE,
-    INSERT,
-    INTO,
-    VALUES,
-    DELETE,
-    UPDATE,
-    SET,
-    CREATE,
-    TABLE,
-    INDEX,
-    DROP,
-    ALTER,
-    ADD,
-    COLUMN,
-    RENAME,
-    TO,
-    JOIN,
-    INNER,
-    LEFT,
-    RIGHT,
-    FULL,
-    OUTER,
-    CROSS,
-    ON,
-    GROUP,
-    BY,
-    HAVING,
-    COUNT,
-    SUM,
-    AVG,
-    MIN,
-    MAX,
-    AS,
-    
-    // Literals
-    STRING(String),
-    INTEGER(i64),
-    FLOAT(f64),
-    
-    // Identifiers
-    IDENTIFIER(String),
-    
+    ILLEGAL, EOF,
+
+    // Identifiers + literals
+    IDENTIFIER(String), // Holds the identifier string
+    STRING(String),     // Holds the string value, without quotes
+    // Numeric literals are first tokenized as generic NUMBER, then refined or stored as string in Token.literal
+    // For simplicity with current errors, let's assume INTEGER and FLOAT are distinct types recognized by lexer, 
+    // but they don't carry the value directly in TokenType enum.
+    INTEGER, // Unit variant, value in Token.literal
+    FLOAT,   // Unit variant, value in Token.literal
+
     // Operators
-    EQUALS,         // =
-    LessThan,       // <
-    GreaterThan,    // >
-    LessEqual,      // <=
-    GreaterEqual,   // >=
-    NotEqual,       // <>
-    PLUS,           // +
-    MINUS,          // -
-    MULTIPLY,       // *
-    DIVIDE,         // /
-    MODULO,         // %
-    
-    // Punctuation
-    SEMICOLON,      // ;
-    COMMA,          // ,
-    LeftParen,      // (
-    RightParen,     // )
-    DOT,            // .
-    
-    // Special
-    EOF,
-    ILLEGAL(String),
+    // ... (ASSIGN, PLUS, MINUS, etc.)
+    ASSIGN, PLUS, MINUS, BANG, ASTERISK, SLASH, PERCENT,
+    LT, GT, EQ, 
+    NotEq, // Was NOT_EQ
+    LtEq,  // Was LT_EQ
+    GtEq,  // Was GT_EQ
+
+    // Delimiters
+    // ... (COMMA, SEMICOLON, LPAREN, etc.)
+    COMMA, SEMICOLON, LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET, DOT,
+
+    // Keywords
+    FUNCTION, LET, TRUE, FALSE, IF, ELSE, RETURN, WHILE, FOR, IN, AS, 
+    SELECT, FROM, WHERE, JOIN, INNER, LEFT, RIGHT, FULL, CROSS, ON, OUTER,
+    GROUP, HAVING, INSERT, INTO, VALUES, UPDATE, SET, DELETE,
+    CREATE, TABLE, ALTER, ADD, DROP, COLUMN, RENAME, TO, TYPE, 
+    TEXT, BOOLEAN, DATE, TIMESTAMP, // Removed INTEGER, FLOAT from here as they are above
+    PRIMARY, KEY, NULL, NOT, 
+    DEFAULT, UNIQUE, CHECK, CONSTRAINT, FOREIGN, REFERENCES, 
+    INDEX, 
+    ORDER, BY, ASC, DESC, // Added for ORDER BY
+    COUNT, SUM, AVG, MIN, MAX, // Aggregate functions
+    CASE, WHEN, THEN, END, IS, // Added IS
+    // Any other keywords...
 }
 
 /// A Token represents a lexical unit in the SQL query
@@ -160,7 +128,7 @@ impl<'a> Lexer<'a> {
         
         // Read rest of identifier
         while let Some(next_ch) = self.peek_char() {
-            if is_letter(next_ch) || next_ch.is_digit(10) || next_ch == '_' {
+            if is_letter(next_ch) || next_ch.is_ascii_digit() || next_ch == '_' {
                 identifier.push(next_ch);
                 self.read_char();
             } else {
@@ -181,14 +149,14 @@ impl<'a> Lexer<'a> {
         
         // First digit is already read in self.ch
         if let Some(ch) = self.ch {
-            if ch.is_digit(10) {
+            if ch.is_ascii_digit() {
                 number.push(ch);
             }
         }
         
         // Read rest of the number
         while let Some(next_ch) = self.peek_char() {
-            if next_ch.is_digit(10) {
+            if next_ch.is_ascii_digit() {
                 number.push(next_ch);
                 self.read_char();
             } else if next_ch == '.' && !has_dot {
@@ -265,6 +233,30 @@ impl<'a> Lexer<'a> {
             "MIN" => TokenType::MIN,
             "MAX" => TokenType::MAX,
             "AS" => TokenType::AS,
+            "TYPE" => TokenType::TYPE,
+            "TEXT" => TokenType::TEXT,
+            "BOOLEAN" => TokenType::BOOLEAN,
+            "DATE" => TokenType::DATE,
+            "TIMESTAMP" => TokenType::TIMESTAMP,
+            "PRIMARY" => TokenType::PRIMARY,
+            "KEY" => TokenType::KEY,
+            "NULL" => TokenType::NULL,
+            "NOT" => TokenType::NOT,
+            "DEFAULT" => TokenType::DEFAULT,
+            "UNIQUE" => TokenType::UNIQUE,
+            "CHECK" => TokenType::CHECK,
+            "CONSTRAINT" => TokenType::CONSTRAINT,
+            "FOREIGN" => TokenType::FOREIGN,
+            "REFERENCES" => TokenType::REFERENCES,
+            "ORDER" => TokenType::ORDER,
+            "ASC" => TokenType::ASC,
+            "DESC" => TokenType::DESC,
+            "CASE" => TokenType::CASE,
+            "WHEN" => TokenType::WHEN,
+            "THEN" => TokenType::THEN,
+            "ELSE" => TokenType::ELSE,
+            "END" => TokenType::END,
+            "IS" => TokenType::IS,
             _ => TokenType::IDENTIFIER(ident.to_string()),
         }
     }
@@ -274,100 +266,91 @@ impl<'a> Lexer<'a> {
         self.skip_whitespace();
         
         let mut token = Token {
-            token_type: TokenType::EOF,
-            literal: String::new(),
+            token_type: TokenType::ILLEGAL,
+            literal: "".to_string(),
             line: self.line,
             column: self.column,
         };
         
-        match self.ch {
-            Some(ch) => {
-                token.literal = ch.to_string();
-                
-                match ch {
-                    ';' => token.token_type = TokenType::SEMICOLON,
-                    ',' => token.token_type = TokenType::COMMA,
-                    '(' => token.token_type = TokenType::LeftParen,
-                    ')' => token.token_type = TokenType::RightParen,
-                    '.' => token.token_type = TokenType::DOT,
-                    '+' => token.token_type = TokenType::PLUS,
-                    '-' => token.token_type = TokenType::MINUS,
-                    '*' => token.token_type = TokenType::MULTIPLY,
-                    '/' => token.token_type = TokenType::DIVIDE,
-                    '%' => token.token_type = TokenType::MODULO,
-                    '=' => token.token_type = TokenType::EQUALS,
-                    '<' => {
-                        if let Some(next_ch) = self.peek_char() {
-                            if next_ch == '=' {
-                                self.read_char();
-                                token.literal.push('=');
-                                token.token_type = TokenType::LessEqual;
-                            } else if next_ch == '>' {
-                                self.read_char();
-                                token.literal.push('>');
-                                token.token_type = TokenType::NotEqual;
-                            } else {
-                                token.token_type = TokenType::LessThan;
-                            }
+        if let Some(ch) = self.ch {
+            token.literal = ch.to_string(); // Default literal is the char itself for single char tokens
+            
+            match ch {
+                ';' => token.token_type = TokenType::SEMICOLON,
+                ',' => token.token_type = TokenType::COMMA,
+                '(' => token.token_type = TokenType::LPAREN,
+                ')' => token.token_type = TokenType::RPAREN,
+                '.' => token.token_type = TokenType::DOT,
+                '+' => token.token_type = TokenType::PLUS,
+                '-' => token.token_type = TokenType::MINUS,
+                '*' => token.token_type = TokenType::ASTERISK,
+                '/' => token.token_type = TokenType::SLASH,
+                '%' => token.token_type = TokenType::PERCENT,
+                '=' => token.token_type = TokenType::ASSIGN,
+                '<' => {
+                    if let Some(next_ch) = self.peek_char() {
+                        if next_ch == '=' {
+                            self.read_char();
+                            token.literal.push('=');
+                            token.token_type = TokenType::LtEq;
+                        } else if next_ch == '>' {
+                            self.read_char();
+                            token.literal.push('>');
+                            token.token_type = TokenType::NotEq;
                         } else {
-                            token.token_type = TokenType::LessThan;
+                            token.token_type = TokenType::LT;
                         }
-                    },
-                    '>' => {
-                        if let Some(next_ch) = self.peek_char() {
-                            if next_ch == '=' {
-                                self.read_char();
-                                token.literal.push('=');
-                                token.token_type = TokenType::GreaterEqual;
-                            } else {
-                                token.token_type = TokenType::GreaterThan;
-                            }
+                    } else {
+                        token.token_type = TokenType::LT;
+                    }
+                },
+                '>' => {
+                    if let Some(next_ch) = self.peek_char() {
+                        if next_ch == '=' {
+                            self.read_char();
+                            token.literal.push('=');
+                            token.token_type = TokenType::GtEq;
                         } else {
-                            token.token_type = TokenType::GreaterThan;
+                            token.token_type = TokenType::GT;
                         }
-                    },
-                    '\'' => {
-                        let str_value = self.read_string();
-                        token.literal = format!("'{}'", str_value);
-                        token.token_type = TokenType::STRING(str_value);
-                        return token; // No need to advance since read_string handled it
-                    },
-                    _ => {
-                        if is_letter(ch) {
-                            let identifier = self.read_identifier();
-                            token.literal = identifier.clone();
-                            token.token_type = self.lookup_identifier(&identifier);
-                            return token; // No need to read_char again
-                        } else if ch.is_digit(10) {
-                            let number = self.read_number();
-                            token.literal = number.clone();
-                            
-                            // Determine if it's an integer or float
-                            if number.contains('.') {
-                                if let Ok(value) = number.parse::<f64>() {
-                                    token.token_type = TokenType::FLOAT(value);
-                                } else {
-                                    token.token_type = TokenType::ILLEGAL(number);
-                                }
+                    } else {
+                        token.token_type = TokenType::GT;
+                    }
+                },
+                '\'' => {
+                    token.literal = self.read_string();
+                    token.token_type = TokenType::STRING(token.literal.clone());
+                    return token;
+                },
+                _ => {
+                    if is_letter(ch) {
+                        let identifier = self.read_identifier();
+                        token.token_type = self.lookup_identifier(&identifier);
+                        token.literal = identifier;
+                        return token;
+                    } else if ch.is_ascii_digit() {
+                        let number_str = self.read_number();
+                        token.literal = number_str.clone();
+                        if number_str.contains('.') {
+                            if number_str.parse::<f64>().is_ok() {
+                                token.token_type = TokenType::FLOAT;
                             } else {
-                                if let Ok(value) = number.parse::<i64>() {
-                                    token.token_type = TokenType::INTEGER(value);
-                                } else {
-                                    token.token_type = TokenType::ILLEGAL(number);
-                                }
+                                token.token_type = TokenType::ILLEGAL;
                             }
-                            return token; // No need to read_char again
+                        } else if number_str.parse::<i64>().is_ok() {
+                            token.token_type = TokenType::INTEGER;
                         } else {
-                            token.token_type = TokenType::ILLEGAL(ch.to_string());
+                            token.token_type = TokenType::ILLEGAL;
                         }
+                        return token;
+                    } else {
+                        // Unrecognized character, already set to ILLEGAL with ch as literal
                     }
                 }
-            },
-            None => {
-                token.token_type = TokenType::EOF;
-                token.literal = "".to_string();
-                return token;
             }
+        } else {
+            token.token_type = TokenType::EOF;
+            token.literal = "".to_string();
         }
         
         self.read_char();
@@ -389,22 +372,23 @@ mod tests {
         let input = "SELECT * FROM users WHERE id = 1;";
         let mut lexer = Lexer::new(input);
         
-        let expected_tokens = vec![
-            TokenType::SELECT,
-            TokenType::MULTIPLY,
-            TokenType::FROM,
-            TokenType::IDENTIFIER("users".to_string()),
-            TokenType::WHERE,
-            TokenType::IDENTIFIER("id".to_string()),
-            TokenType::EQUALS,
-            TokenType::INTEGER(1),
-            TokenType::SEMICOLON,
-            TokenType::EOF,
+        let expected_tokens_types_literals = vec![
+            (TokenType::SELECT, "SELECT"),
+            (TokenType::ASTERISK, "*"),
+            (TokenType::FROM, "FROM"),
+            (TokenType::IDENTIFIER("users".to_string()), "users"),
+            (TokenType::WHERE, "WHERE"),
+            (TokenType::IDENTIFIER("id".to_string()), "id"),
+            (TokenType::ASSIGN, "="),
+            (TokenType::INTEGER, "1"),
+            (TokenType::SEMICOLON, ";"),
+            (TokenType::EOF, ""),
         ];
         
-        for expected in expected_tokens {
+        for (expected_type, expected_literal) in expected_tokens_types_literals {
             let token = lexer.next_token();
-            assert_eq!(token.token_type, expected);
+            assert_eq!(token.token_type, expected_type, "Token type mismatch for literal '{}'", token.literal);
+            assert_eq!(token.literal, expected_literal, "Token literal mismatch for type {:?}", token.token_type);
         }
     }
     
@@ -413,52 +397,28 @@ mod tests {
         let input = "SELECT name, age FROM users WHERE age > 18 AND name <> 'Bob';";
         let mut lexer = Lexer::new(input);
         
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::SELECT);
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::IDENTIFIER("name".to_string()));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::COMMA);
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::IDENTIFIER("age".to_string()));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::FROM);
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::IDENTIFIER("users".to_string()));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::WHERE);
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::IDENTIFIER("age".to_string()));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::GreaterThan);
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::INTEGER(18));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::IDENTIFIER("AND".to_string()));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::IDENTIFIER("name".to_string()));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::NotEqual);
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::STRING("Bob".to_string()));
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::SEMICOLON);
-        
-        let token = lexer.next_token();
-        assert_eq!(token.token_type, TokenType::EOF);
+        // Helper to check next token
+        let mut assert_next_token = |expected_type: TokenType, expected_literal: &str| {
+            let token = lexer.next_token();
+            assert_eq!(token.token_type, expected_type, "Type check failed for literal: {}", token.literal);
+            assert_eq!(token.literal, expected_literal, "Literal check failed for type: {:?}", token.token_type);
+        };
+
+        assert_next_token(TokenType::SELECT, "SELECT");
+        assert_next_token(TokenType::IDENTIFIER("name".to_string()), "name");
+        assert_next_token(TokenType::COMMA, ",");
+        assert_next_token(TokenType::IDENTIFIER("age".to_string()), "age");
+        assert_next_token(TokenType::FROM, "FROM");
+        assert_next_token(TokenType::IDENTIFIER("users".to_string()), "users");
+        assert_next_token(TokenType::WHERE, "WHERE");
+        assert_next_token(TokenType::IDENTIFIER("age".to_string()), "age");
+        assert_next_token(TokenType::GT, ">");
+        assert_next_token(TokenType::INTEGER, "18");
+        assert_next_token(TokenType::IDENTIFIER("AND".to_string()), "AND");
+        assert_next_token(TokenType::IDENTIFIER("name".to_string()), "name");
+        assert_next_token(TokenType::NotEq, "<>");
+        assert_next_token(TokenType::STRING("Bob".to_string()), "Bob");
+        assert_next_token(TokenType::SEMICOLON, ";");
+        assert_next_token(TokenType::EOF, "");
     }
 } 

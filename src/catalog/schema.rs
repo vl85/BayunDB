@@ -67,6 +67,18 @@ impl DataType {
             DataType::Blob => "BLOB".to_string(),
         }
     }
+
+    pub fn to_error_string(&self) -> String {
+        match self {
+            DataType::Integer => "Integer".to_string(),
+            DataType::Float => "Float".to_string(),
+            DataType::Text => "Text".to_string(),
+            DataType::Boolean => "Boolean".to_string(),
+            DataType::Date => "Date".to_string(),
+            DataType::Timestamp => "Timestamp".to_string(),
+            DataType::Blob => "Blob".to_string(),
+        }
+    }
 }
 
 /// Represents a database schema, which is a collection of tables

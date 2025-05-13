@@ -99,22 +99,26 @@ This document outlines the implementation plan for adding aggregate operator sup
 
 ## Current Status
 
-- ✅ Parser implementation is complete with tests
-- ✅ AST structure has been enhanced to support GROUP BY, HAVING, and aggregate functions
-- ✅ Logical planner has been updated to create Aggregate nodes
-- ✅ Physical planner has been updated to handle aggregation
-- ✅ Cost model enhanced to account for group-by complexity
-- ✅ HashAggregateOperator has been fully implemented with all aggregation functions
-- ✅ SortAggregateOperator has been implemented for memory-efficient processing
-- ✅ Integration tests for parser features are passing
-- ✅ Full execution engine implementation for aggregation is complete
-- ✅ End-to-end query execution for aggregation is complete with tests
-- ✅ CLI integration for aggregation has been tested and fixed
-- ✅ Performance testing for aggregation operations is complete
+- ✅ Parser, AST, and planner support for GROUP BY, HAVING, and aggregate functions is complete
+- ✅ Logical and physical planners fully support aggregation, including cost estimation
+- ✅ HashAggregate and SortAggregate operators are implemented and tested
+- ✅ Predicate pushdown optimization is implemented, including for filters across joins (see optimizer improvements)
+- ✅ Full execution engine support for all aggregate functions (COUNT, SUM, AVG, MIN, MAX) with null handling
+- ✅ Integration and performance tests for aggregation, grouping, and HAVING are passing
+- ✅ CLI and documentation updated with aggregation examples and edge cases
+- ✅ All aggregation features are released and stable
+
+### Notable Recent Improvements
+
+- **Predicate Pushdown:** The optimizer now pushes filters below joins where possible, improving aggregation performance and query efficiency.
+- **Cost Model Integration:** Aggregation operators are now considered in the cost model, allowing for better physical plan selection.
+- **Robust Testing:** All aggregation features are covered by unit, integration, and performance tests, including edge cases (empty groups, NULLs, multi-column grouping, HAVING, and joins).
 
 ## Next Steps
 
-✅ All Aggregation Operator features have been implemented, tested, and documented.
+- Monitor for performance bottlenecks with large group sets; consider partial aggregation and disk spilling if needed
+- Explore parallel and streaming aggregation for further performance improvements
+- Continue to expand test coverage for edge cases and integration with other SQL features
 
 ## Dependencies
 

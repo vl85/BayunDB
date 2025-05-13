@@ -5,6 +5,7 @@ use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
 use bayundb::transaction::wal::log_buffer::LogBufferConfig;
 use bayundb::transaction::{IsolationLevel, Transaction};
 use bayundb::transaction::concurrency::transaction_manager::TransactionManager;
+use bayundb::storage::page::PageManager;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create log manager
@@ -110,8 +111,8 @@ fn insert_record(
     buffer_pool: &BufferPoolManager,
     data: &[u8],
 ) -> Result<Rid, Box<dyn std::error::Error>> {
-    let disk_manager = buffer_pool.disk_manager();
-    let page_manager = disk_manager.page_manager();
+    let _disk_manager = buffer_pool.disk_manager();
+    let page_manager = PageManager::new();
     
     // Insert the record (without any WAL yet)
     let mut page_guard = page.write();
@@ -136,8 +137,8 @@ fn update_record(
     old_data: &[u8],
     new_data: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let disk_manager = buffer_pool.disk_manager();
-    let page_manager = disk_manager.page_manager();
+    let _disk_manager = buffer_pool.disk_manager();
+    let page_manager = PageManager::new();
     
     // Update the record (without any WAL yet)
     let mut page_guard = page.write();

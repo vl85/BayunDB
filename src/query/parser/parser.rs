@@ -6,7 +6,7 @@
 use super::ast::*;
 use super::lexer::{Lexer, TokenType};
 use super::components::{
-    Parser as ComponentParser, 
+    Parser, 
     ParseResult, 
     ParseError,
     parse_select,
@@ -33,23 +33,25 @@ pub fn parse(sql: &str) -> ParseResult<Statement> {
         }
     }
     
-    let mut component_parser = ComponentParser {
+    let mut parser = Parser {
         tokens: tokens.into_iter().peekable(),
         current_token: None,
+        line: Some(1),
+        column: Some(0),
     };
-    component_parser.next_token();
+    parser.next_token();
     
     // Call the appropriate component parser based on the first token
-    match &component_parser.current_token {
+    match &parser.current_token {
         Some(token) => {
             match token.token_type {
-                TokenType::SELECT => parse_select(&mut component_parser),
-                TokenType::INSERT => parse_insert(&mut component_parser),
-                TokenType::UPDATE => parse_update(&mut component_parser),
-                TokenType::DELETE => parse_delete(&mut component_parser),
-                TokenType::CREATE => parse_create(&mut component_parser),
-                TokenType::DROP => parse_drop(&mut component_parser),
-                TokenType::ALTER => parse_alter(&mut component_parser),
+                TokenType::SELECT => parse_select(&mut parser),
+                TokenType::INSERT => parse_insert(&mut parser),
+                TokenType::UPDATE => parse_update(&mut parser),
+                TokenType::DELETE => parse_delete(&mut parser),
+                TokenType::CREATE => parse_create(&mut parser),
+                TokenType::DROP => parse_drop(&mut parser),
+                TokenType::ALTER => parse_alter(&mut parser),
                 _ => Err(ParseError::UnexpectedToken(token.clone())),
             }
         },
@@ -303,28 +305,28 @@ mod tests {
             let id_col = &create_stmt.columns[0];
             assert_eq!(id_col.name, "id");
             assert_eq!(id_col.data_type, DataType::Integer);
-            assert_eq!(id_col.primary_key, true);
-            assert_eq!(id_col.nullable, false);
+            assert!(id_col.primary_key);
+            assert!(!id_col.nullable);
             
             // Check name column
             let name_col = &create_stmt.columns[1];
             assert_eq!(name_col.name, "name");
             assert_eq!(name_col.data_type, DataType::Text);
-            assert_eq!(name_col.primary_key, false);
-            assert_eq!(name_col.nullable, false);
+            assert!(!name_col.primary_key);
+            assert!(!name_col.nullable);
             
             // Check email column (note: assuming default nullable is true)
             let email_col = &create_stmt.columns[2];
             assert_eq!(email_col.name, "email");
             assert_eq!(email_col.data_type, DataType::Text);
-            assert_eq!(email_col.primary_key, false);
+            assert!(!email_col.primary_key);
             // Don't assert nullable for this test since implementations might differ on default
             
             // Check created_at column (note: assuming default nullable is true)
             let created_col = &create_stmt.columns[3];
             assert_eq!(created_col.name, "created_at");
             assert_eq!(created_col.data_type, DataType::Timestamp);
-            assert_eq!(created_col.primary_key, false);
+            assert!(!created_col.primary_key);
             // Don't assert nullable for this test since implementations might differ on default
         } else {
             panic!("Expected CREATE TABLE statement");

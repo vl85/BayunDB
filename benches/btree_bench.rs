@@ -56,7 +56,7 @@ fn btree_benchmark(c: &mut Criterion) {
             // Insert keys first
             let mut keys = Vec::with_capacity(size as usize);
             for i in 0..size {
-                let key = i as i32;
+                let key = i;
                 btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
                 keys.push(key);
             }
@@ -84,12 +84,12 @@ fn btree_benchmark(c: &mut Criterion) {
             
             // Insert sequential keys
             for i in 0..size {
-                let key = i as i32;
+                let key = i;
                 btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
             }
             
             // Create range scan windows (each scanning 10% of data)
-            let range_size = (size as i32) / 10;
+            let range_size = size / 10;
             let ranges: Vec<(i32, i32)> = (0..9)
                 .map(|i| (i * range_size, (i + 1) * range_size - 1))
                 .collect();
@@ -114,7 +114,7 @@ fn btree_benchmark(c: &mut Criterion) {
             // Insert keys first
             let mut keys = Vec::with_capacity(size as usize);
             for i in 0..size {
-                let key = i as i32;
+                let key = i;
                 btree.insert(key, Rid::new(0, (key as u32) + 1000)).unwrap();
                 keys.push(key);
             }
@@ -136,7 +136,7 @@ fn btree_benchmark(c: &mut Criterion) {
                     idx = 0;
                 }
                 let key = keys[idx];
-                let _ = btree.remove(&key).unwrap();
+                btree.remove(&key).unwrap();
                 idx += 1;
             });
         });

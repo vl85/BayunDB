@@ -57,9 +57,6 @@ impl NestedLoopJoin {
     
     /// Evaluate the join condition between two rows
     fn evaluate_condition(&self, left_row: &Row, right_row: &Row) -> bool {
-        // Crude parser for "[alias1.]col1 OP [alias2.]col2"
-        // Handles =, >, <, >=, <=, !=
-
         let recognized_ops_with_len: Vec<(&str, usize)> = vec![
             (">=", 2), ("<=", 2), ("!=", 2),
             ("=", 1), (">", 1), ("<", 1),
@@ -85,9 +82,6 @@ impl NestedLoopJoin {
         let op = operator.unwrap();
         let (left_expr_str, right_expr_str) = condition_parts.unwrap();
 
-        // The left_expr_str and right_expr_str are expected to be the fully qualified
-        // column names, e.g., "t1.id" or "left_table.fk_id".
-        // These should match the keys in the Row objects coming from TableScanOperator.
         let left_val = left_row.get(&left_expr_str); 
         let right_val = right_row.get(&right_expr_str);
 
@@ -110,15 +104,11 @@ impl NestedLoopJoin {
 
 impl Operator for NestedLoopJoin {
     fn init(&mut self) -> QueryResult<()> {
-        // Initialize both input operators
         self.left.lock().unwrap().init()?;
         self.right.lock().unwrap().init()?;
-        
-        // Get the first left row
         self.current_left_row = self.left.lock().unwrap().next()?;
         self.found_match = false;
         self.initialized = true;
-        
         Ok(())
     }
     
@@ -127,65 +117,47 @@ impl Operator for NestedLoopJoin {
             self.init()?;
         }
         
-        // If no left row, we're done
         if self.current_left_row.is_none() {
             return Ok(None);
         }
         
         loop {
-            // Get the next right row
             let right_row = self.right.lock().unwrap().next()?;
             
             match right_row {
                 Some(right) => {
                     if self.evaluate_condition(self.current_left_row.as_ref().unwrap(), &right) {
                         self.found_match = true;
-                        
                         let mut joined_row = Row::new();
                         let left_row_ref = self.current_left_row.as_ref().unwrap();
-
-                        // Add all columns from the left_row. Names are already qualified by TableScanOperator.
-                        for left_col_key in left_row_ref.columns() { // left_col_key is e.g., "t1.id"
+                        for left_col_key in left_row_ref.columns() { 
                             if let Some(value) = left_row_ref.get(left_col_key) {
                                 joined_row.set(left_col_key.clone(), value.clone());
                             }
                         }
-                        
-                        // Add all columns from the right row. Names are already qualified.
-                        for right_col_key in right.columns() { // right_col_key is e.g., "t2.fk_id"
+                        for right_col_key in right.columns() { 
                             if let Some(value) = right.get(right_col_key) {
-                                // Simple set; assumes TableScanOperator aliases make keys unique.
-                                // If t1.name and t2.name both exist, they are distinct keys.
                                 joined_row.set(right_col_key.clone(), value.clone());
                             }
                         }
-                        
                         return Ok(Some(joined_row));
                     }
                 }
-                None => { // Reached the end of right relation
+                None => { 
                     let mut emit_unmatched_left = false;
-                    if self.is_left_join && !self.found_match {
-                        if self.current_left_row.is_some() { 
-                            emit_unmatched_left = true;
-                        }
+                    if self.is_left_join && !self.found_match && self.current_left_row.is_some() { 
+                        emit_unmatched_left = true;
                     }
 
                     if emit_unmatched_left {
                         let mut joined_row = Row::new();
                         if let Some(left_row_ref) = self.current_left_row.as_ref() {
-                            // Add all columns from the left_row for the unmatched case.
                             for left_col_key in left_row_ref.columns() {
                                 if let Some(value) = left_row_ref.get(left_col_key) {
                                     joined_row.set(left_col_key.clone(), value.clone());
                                 }
                             }
-                            // For a true LEFT JOIN, we'd add NULLs for all columns of the right table's schema here.
-                            // This requires knowing the right table's schema (column names and aliases).
-                            // For now, it just includes the left side.
                         }
-                        
-                        // Advance to the next left row and reset right side *before* returning unmatched row
                         self.current_left_row = self.left.lock().unwrap().next()?;
                         self.found_match = false; 
                         if self.current_left_row.is_some() { 
@@ -199,7 +171,6 @@ impl Operator for NestedLoopJoin {
                     
                     self.current_left_row = self.left.lock().unwrap().next()?;
                     self.found_match = false; 
-                    
                     if self.current_left_row.is_none() {
                         return Ok(None); 
                     } else {

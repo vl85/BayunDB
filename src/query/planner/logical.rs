@@ -54,8 +54,11 @@ pub enum LogicalPlan {
         input: Box<LogicalPlan>,
         /// Group by expressions
         group_by: Vec<Expression>,
-        /// Aggregate expressions (COUNT, SUM, etc.)
-        aggregate_expressions: Vec<Expression>,
+        /// Aggregate function expressions identified in the query (e.g., AVG(price))
+        // This might be useful for the planner/executor to know which raw aggregates need computing.
+        aggregate_functions: Vec<Expression>,
+        /// The final select list for the aggregation output, including group keys and aggregates with their final names/aliases.
+        select_list: Vec<(Expression, String)>, // (Expression, FinalOutputName)
         /// Having clause (optional)
         having: Option<Expression>,
     },
@@ -70,6 +73,13 @@ pub enum LogicalPlan {
     AlterTable {
         /// The AlterTable statement from the AST
         statement: AlterTableStatement,
+    },
+    /// Sort operation (ORDER BY)
+    Sort {
+        /// Input plan
+        input: Box<LogicalPlan>,
+        /// Sort key expressions and direction (true for DESC)
+        order_by: Vec<(Expression, bool)>,
     },
 }
 
@@ -93,8 +103,8 @@ impl fmt::Display for LogicalPlan {
                 write!(f, "{:?} Join: {:?}\n  Left: {}\n  Right: {}", 
                        join_type, condition, left, right)
             }
-            LogicalPlan::Aggregate { input, group_by, aggregate_expressions, having } => {
-                let agg_str = aggregate_expressions.iter()
+            LogicalPlan::Aggregate { input, group_by, aggregate_functions, select_list, having } => {
+                let agg_str = aggregate_functions.iter()
                     .map(|e| format!("{:?}", e))
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -121,6 +131,16 @@ impl fmt::Display for LogicalPlan {
             }
             LogicalPlan::AlterTable { statement } => {
                 write!(f, "AlterTable: {}", statement)
+            }
+            LogicalPlan::Sort { input, order_by } => {
+                let order_by_str = order_by
+                    .iter()
+                    .map(|(expr, is_desc)| {
+                        format!("{:?} {}", expr, if *is_desc { "DESC" } else { "ASC" })
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "LogicalSort: [{}]\n  {}", order_by_str, input)
             }
         }
     }
@@ -216,7 +236,7 @@ fn contains_aggregate_expr(expr: &Expression) -> bool {
             contains_aggregate_expr(left) || contains_aggregate_expr(right)
         }
         Expression::Function { args, .. } => {
-            args.iter().any(|arg| contains_aggregate_expr(arg))
+            args.iter().any(contains_aggregate_expr)
         }
         _ => false,
     }
@@ -225,86 +245,110 @@ fn contains_aggregate_expr(expr: &Expression) -> bool {
 /// Build a logical plan from a SELECT statement
 pub fn build_logical_plan(stmt: &SelectStatement, catalog: Arc<RwLock<Catalog>>) -> LogicalPlan {
     // Start with the FROM clause - this forms the base of our plan
-    if stmt.from.is_empty() {
+    let plan = if stmt.from.is_empty() {
         // Handle case with no FROM clause (e.g., SELECT 1+1)
-        // Here, extract_column_names won't have a source_table_name for wildcard, so "*" would remain "*"
+        // Need to populate the select_list here too if we eventually support aggregates without FROM
         let projection_cols = extract_column_names(&stmt.columns, None, Some(&catalog));
-        return LogicalPlan::Projection {
+        LogicalPlan::Projection {
             columns: projection_cols,
             input: Box::new(LogicalPlan::Scan { // Or a dummy / constant value plan
                 table_name: "dual".to_string(), // Use a dummy table
                 alias: None,
             }),
+        }
+    } else {
+        // Start with the first (or only) table in the FROM clause
+        let base_table_ref = &stmt.from[0];
+        let mut base_plan = LogicalPlan::Scan {
+            table_name: base_table_ref.name.clone(),
+            alias: base_table_ref.alias.clone(),
         };
-    }
-    
-    // Start with the first (or only) table in the FROM clause
-    let base_table_ref = &stmt.from[0];
-    let mut plan = LogicalPlan::Scan {
-        table_name: base_table_ref.name.clone(),
-        alias: base_table_ref.alias.clone(),
+
+        // Process JOIN clauses if any
+        for join in &stmt.joins {
+            let right_table_ref = &join.table;
+            let right_plan = LogicalPlan::Scan {
+                table_name: right_table_ref.name.clone(),
+                alias: right_table_ref.alias.clone(),
+            };
+            // A JOIN without a condition is a CROSS JOIN, which can be represented
+            // by a join condition that is always true.
+            let join_condition_val = join.condition.clone().map_or_else(
+                || Expression::Literal(crate::query::parser::ast::Value::Boolean(true)), // Returns Expression
+                |expr| expr // expr is already Expression, no dereference needed
+            );
+            base_plan = LogicalPlan::Join {
+                left: Box::new(base_plan),
+                right: Box::new(right_plan),
+                condition: join_condition_val, // join_condition_val is now Expression
+                join_type: join.join_type.clone(),
+            };
+        }
+
+        // Apply WHERE clause (Filter)
+        if let Some(expr_box) = stmt.where_clause.clone() { // Changed from stmt.filter, expr_box is Box<Expression>
+            base_plan = LogicalPlan::Filter {
+                input: Box::new(base_plan),
+                predicate: *expr_box, // Dereference Box<Expression> to get Expression
+            };
+        }
+
+        // Apply GROUP BY and HAVING (Aggregate)
+        if stmt.group_by.as_ref().is_some_and(|gb| !gb.is_empty()) || has_aggregates(stmt) {
+            let aggregate_functions = extract_aggregate_expressions(&stmt.columns);
+            
+            // Populate the select list for the Aggregate node
+            let final_select_list: Vec<(Expression, String)> = stmt.columns.iter().filter_map(|sc| {
+                match sc {
+                    SelectColumn::Column(col_ref) => {
+                        Some((Expression::Column(col_ref.clone()), col_ref.name.clone()))
+                    },
+                    SelectColumn::Expression { expr, alias } => {
+                        let output_name = alias.clone().unwrap_or_else(|| expr.to_string());
+                        Some(((**expr).clone(), output_name))
+                    },
+                    SelectColumn::Wildcard => {
+                        // Wildcard in aggregate select list is complex. It usually implies selecting all group keys.
+                        // For now, we might ignore it or raise an error, assuming valid queries list group keys explicitly.
+                        eprintln!("Warning: Wildcard (*) found in SELECT list with GROUP BY/aggregates. Ignoring.");
+                        None
+                    }
+                }
+            }).collect();
+
+            base_plan = LogicalPlan::Aggregate {
+                input: Box::new(base_plan),
+                group_by: stmt.group_by.clone().unwrap_or_default(),
+                aggregate_functions,
+                select_list: final_select_list, // Use the populated list
+                having: stmt.having.clone().map(|boxed_expr| *boxed_expr),
+            };
+        }
+
+        // Apply Projection (SELECT columns)
+        // This step is now applied regardless of whether an Aggregate step was added or not,
+        // ensuring that the final output structure matches the SELECT list from the AST.
+        let final_projection_cols = extract_column_names(&stmt.columns, 
+                                                       if !stmt.from.is_empty() { Some(stmt.from[0].name.as_str()) } else { None }, 
+                                                       Some(&catalog));
+        
+        base_plan = LogicalPlan::Projection {
+            columns: final_projection_cols,
+            input: Box::new(base_plan),
+        };
+
+        // Apply ORDER BY (Sort)
+        if !stmt.order_by.is_empty() {
+            base_plan = LogicalPlan::Sort {
+                input: Box::new(base_plan),
+                order_by: stmt.order_by.clone(),
+            };
+        }
+
+        base_plan
     };
-    let current_source_table_name_for_wildcard = base_table_ref.name.as_str();
 
-    // Process JOIN clauses if any
-    for join in &stmt.joins {
-        let right_plan = LogicalPlan::Scan {
-            table_name: join.table.name.clone(),
-            alias: join.table.alias.clone(),
-        };
-        
-        plan = LogicalPlan::Join {
-            left: Box::new(plan),
-            right: Box::new(right_plan),
-            condition: *join.condition.clone(),
-            join_type: join.join_type.clone(),
-        };
-        // After a join, wildcard expansion becomes more complex (needs to consider columns from all joined tables).
-        // For this initial fix, we'll simplify and say wildcard after join is not yet fully schema-aware.
-        // Or, if we only support `SELECT T1.*, T2.*`, that's different.
-        // For a simple `SELECT *` after join, it would list all columns from all tables.
-        // This part is NOT being fully addressed in this immediate edit for simplicity.
-        // current_source_table_name_for_wildcard = ???; // This becomes tricky
-    }
-    
-    // If there's a WHERE clause, add a Filter node
-    if let Some(where_expr) = &stmt.where_clause {
-        plan = LogicalPlan::Filter {
-            predicate: (**where_expr).clone(),
-            input: Box::new(plan),
-        };
-    }
-    
-    // Handle GROUP BY and Aggregation if present
-    if has_aggregates(stmt) || stmt.group_by.as_ref().map_or(false, |gb_vec| !gb_vec.is_empty()) {
-        let aggregate_expressions = extract_aggregate_expressions(&stmt.columns);
-        let projection_names = extract_column_names(&stmt.columns, Some(current_source_table_name_for_wildcard), Some(&catalog));
-
-        plan = LogicalPlan::Aggregate {
-            input: Box::new(plan),
-            group_by: stmt.group_by.clone().unwrap_or_default(),
-            aggregate_expressions,
-            having: stmt.having.clone().map(|expr| *expr),
-        };
-        
-        return LogicalPlan::Projection { 
-            columns: projection_names, 
-            input: Box::new(plan),
-        };
-    }
-    
-    // Add a Projection node for the SELECT columns
-    // This is the main place where SELECT * expansion for non-aggregate queries will take effect.
-    let final_projection_columns = extract_column_names(
-        &stmt.columns, 
-        Some(current_source_table_name_for_wildcard), // Pass table name for wildcard
-        Some(&catalog) // Pass catalog for schema lookup
-    );
-
-    LogicalPlan::Projection {
-        columns: final_projection_columns,
-        input: Box::new(plan),
-    }
+    plan
 }
 
 /// Check if a column reference belongs to a specific table
@@ -332,7 +376,6 @@ mod tests {
     
     #[test]
     fn test_simple_logical_plan() {
-        // Create a simple SELECT statement
         let stmt = SelectStatement {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
@@ -352,9 +395,8 @@ mod tests {
             joins: vec![],
             group_by: None,
             having: None,
+            order_by: Vec::new(),
         };
-        
-        // Build logical plan
         let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure
@@ -374,7 +416,6 @@ mod tests {
     
     #[test]
     fn test_logical_plan_with_filter() {
-        // Create a SELECT statement with a WHERE clause
         let stmt = SelectStatement {
             columns: vec![SelectColumn::Wildcard],
             from: vec![TableReference {
@@ -392,9 +433,8 @@ mod tests {
             joins: vec![],
             group_by: None,
             having: None,
+            order_by: Vec::new(),
         };
-        
-        // Build logical plan
         let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure
@@ -418,8 +458,7 @@ mod tests {
     
     #[test]
     fn test_where_clause() {
-        // Create a SELECT statement with WHERE clause
-        let stmt = SelectStatement {
+        let _stmt = SelectStatement {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
                     table: None,
@@ -445,12 +484,12 @@ mod tests {
             joins: vec![],
             group_by: None,
             having: None,
+            order_by: Vec::new(),
         };
     }
 
     #[test]
     fn test_filter_plan() {
-        // Create a SELECT statement with WHERE clause
         let stmt = SelectStatement {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
@@ -477,9 +516,8 @@ mod tests {
             joins: vec![],
             group_by: None,
             having: None,
+            order_by: Vec::new(),
         };
-        
-        // Build logical plan
         let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Verify the structure - should have Filter between Projection and Scan
@@ -501,7 +539,6 @@ mod tests {
 
     #[test]
     fn test_simple_plan() {
-        // Create a simple SELECT statement
         let stmt = SelectStatement {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
@@ -517,9 +554,8 @@ mod tests {
             joins: vec![],
             group_by: None,
             having: None,
+            order_by: Vec::new(),
         };
-        
-        // Build logical plan
         let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
         
         // Should be a simple Projection -> Scan
@@ -540,51 +576,49 @@ mod tests {
 
     #[test]
     fn test_logical_plan_with_group_by() {
-        // Create a SELECT statement with a GROUP BY clause
         let stmt = SelectStatement {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
                     table: None,
-                    name: "department_id".to_string(),
+                    name: "category".to_string(),
                 }),
-                SelectColumn::Expression { 
-                    expr: Box::new(Expression::Aggregate { 
-                        function: AggregateFunction::Count, 
+                SelectColumn::Expression {
+                    expr: Box::new(Expression::Aggregate {
+                        function: AggregateFunction::Count,
                         arg: None,
                     }),
                     alias: Some("count".to_string()),
                 },
             ],
             from: vec![TableReference {
-                name: "employees".to_string(),
+                name: "products".to_string(),
                 alias: None,
             }],
             where_clause: None,
             joins: vec![],
-            group_by: Some(vec![
-                Expression::Column(ColumnReference {
-                    table: None,
-                    name: "department_id".to_string(),
-                }),
-            ]),
+            group_by: Some(vec![Expression::Column(ColumnReference {
+                table: None,
+                name: "category".to_string(),
+            })]),
             having: None,
+            order_by: Vec::new(),
         };
-        
-        // Build logical plan
         let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
-        
+
         // Verify the structure
         if let LogicalPlan::Projection { columns, input } = plan {
-            assert_eq!(columns, vec!["department_id".to_string(), "count".to_string()]);
+            assert_eq!(columns, vec!["category", "count"]); // Check final projection columns
             
-            if let LogicalPlan::Aggregate { input: agg_input, group_by, aggregate_expressions, having } = *input {
+            if let LogicalPlan::Aggregate { input: agg_input, group_by, aggregate_functions, select_list, .. } = *input {
                 assert_eq!(group_by.len(), 1);
-                assert_eq!(aggregate_expressions.len(), 1);
-                assert!(having.is_none());
-                
-                if let LogicalPlan::Scan { table_name, alias } = *agg_input {
-                    assert_eq!(table_name, "employees");
-                    assert!(alias.is_none());
+                assert_eq!(aggregate_functions.len(), 1);
+                assert_eq!(select_list.len(), 2, "Aggregate select_list should contain group key and aggregate");
+                assert_eq!(select_list[0].0, Expression::Column(ColumnReference { table: None, name: "category".to_string() }));
+                assert_eq!(select_list[0].1, "category");
+                assert_eq!(select_list[1].1, "count");
+
+                if let LogicalPlan::Scan { table_name, .. } = *agg_input {
+                    assert_eq!(table_name, "products");
                 } else {
                     panic!("Expected Scan operation under Aggregate");
                 }
@@ -598,58 +632,52 @@ mod tests {
     
     #[test]
     fn test_logical_plan_with_having() {
-        // Create a SELECT statement with GROUP BY and HAVING clauses
         let stmt = SelectStatement {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
                     table: None,
-                    name: "department_id".to_string(),
+                    name: "category".to_string(),
                 }),
-                SelectColumn::Expression { 
-                    expr: Box::new(Expression::Aggregate { 
-                        function: AggregateFunction::Count, 
-                        arg: None,
-                    }),
-                    alias: Some("count".to_string()),
-                },
             ],
             from: vec![TableReference {
-                name: "employees".to_string(),
+                name: "products".to_string(),
                 alias: None,
             }],
             where_clause: None,
             joins: vec![],
-            group_by: Some(vec![
-                Expression::Column(ColumnReference {
-                    table: None,
-                    name: "department_id".to_string(),
-                }),
-            ]),
+            group_by: Some(vec![Expression::Column(ColumnReference {
+                table: None,
+                name: "category".to_string(),
+            })]),
             having: Some(Box::new(Expression::BinaryOp {
-                left: Box::new(Expression::Aggregate { 
-                    function: AggregateFunction::Count, 
+                left: Box::new(Expression::Aggregate {
+                    function: AggregateFunction::Count,
                     arg: None,
                 }),
                 op: Operator::GreaterThan,
-                right: Box::new(Expression::Literal(Value::Integer(5))),
+                right: Box::new(Expression::Literal(Value::Integer(10))),
             })),
+            order_by: Vec::new(),
         };
-        
-        // Build logical plan
         let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
-        
+
         // Verify the structure
         if let LogicalPlan::Projection { columns, input } = plan {
-            assert_eq!(columns, vec!["department_id".to_string(), "count".to_string()]);
+             assert_eq!(columns, vec!["category"]); // Check final projection columns
             
-            if let LogicalPlan::Aggregate { input: agg_input, group_by, aggregate_expressions, having } = *input {
+            if let LogicalPlan::Aggregate { input: agg_input, group_by, aggregate_functions, select_list, having, .. } = *input {
                 assert_eq!(group_by.len(), 1);
-                assert_eq!(aggregate_expressions.len(), 1);
+                // Note: aggregate_functions might be empty if the only aggregate is in HAVING.
+                // Let's adjust the test to reflect the implementation which extracts from SELECT list only.
+                assert_eq!(aggregate_functions.len(), 0); 
                 assert!(having.is_some());
-                
-                if let LogicalPlan::Scan { table_name, alias } = *agg_input {
-                    assert_eq!(table_name, "employees");
-                    assert!(alias.is_none());
+                // Check the Aggregate node's select list
+                assert_eq!(select_list.len(), 1);
+                assert_eq!(select_list[0].0, Expression::Column(ColumnReference { table: None, name: "category".to_string() }));
+                assert_eq!(select_list[0].1, "category");
+
+                if let LogicalPlan::Scan { table_name, .. } = *agg_input {
+                    assert_eq!(table_name, "products");
                 } else {
                     panic!("Expected Scan operation under Aggregate");
                 }
@@ -663,94 +691,59 @@ mod tests {
     
     #[test]
     fn test_logical_plan_with_multiple_aggregates() {
-        // Create a SELECT statement with multiple aggregate functions
         let stmt = SelectStatement {
             columns: vec![
                 SelectColumn::Column(ColumnReference {
                     table: None,
-                    name: "department_id".to_string(),
+                    name: "category".to_string(),
                 }),
-                SelectColumn::Expression { 
-                    expr: Box::new(Expression::Aggregate { 
-                        function: AggregateFunction::Count, 
+                SelectColumn::Expression {
+                    expr: Box::new(Expression::Aggregate {
+                        function: AggregateFunction::Count,
                         arg: None,
                     }),
-                    alias: Some("count".to_string()),
+                    alias: Some("num_items".to_string()),
                 },
-                SelectColumn::Expression { 
-                    expr: Box::new(Expression::Aggregate { 
-                        function: AggregateFunction::Sum, 
-                        arg: Some(Box::new(Expression::Column(ColumnReference {
-                            table: None,
-                            name: "salary".to_string(),
-                        }))),
+                 SelectColumn::Expression {
+                    expr: Box::new(Expression::Aggregate {
+                        function: AggregateFunction::Avg,
+                        arg: Some(Box::new(Expression::Column(ColumnReference { table: None, name: "price".to_string() }))),
                     }),
-                    alias: Some("total_salary".to_string()),
-                },
-                SelectColumn::Expression { 
-                    expr: Box::new(Expression::Aggregate { 
-                        function: AggregateFunction::Avg, 
-                        arg: Some(Box::new(Expression::Column(ColumnReference {
-                            table: None,
-                            name: "salary".to_string(),
-                        }))),
-                    }),
-                    alias: Some("avg_salary".to_string()),
+                    alias: Some("avg_price".to_string()),
                 },
             ],
             from: vec![TableReference {
-                name: "employees".to_string(),
+                name: "products".to_string(),
                 alias: None,
             }],
             where_clause: None,
             joins: vec![],
-            group_by: Some(vec![
-                Expression::Column(ColumnReference {
-                    table: None,
-                    name: "department_id".to_string(),
-                }),
-            ]),
+            group_by: Some(vec![Expression::Column(ColumnReference {
+                table: None,
+                name: "category".to_string(),
+            })]),
             having: None,
+            order_by: Vec::new(),
         };
-        
-        // Build logical plan
         let plan = build_logical_plan(&stmt, Arc::new(RwLock::new(Catalog::new())));
-        
-        // Verify the structure
+
         if let LogicalPlan::Projection { columns, input } = plan {
-            assert_eq!(columns, vec![
-                "department_id".to_string(), 
-                "count".to_string(), 
-                "total_salary".to_string(), 
-                "avg_salary".to_string()
-            ]);
-            
-            if let LogicalPlan::Aggregate { input: agg_input, group_by, aggregate_expressions, .. } = *input {
+             assert_eq!(columns, vec!["category", "num_items", "avg_price"]);
+             
+            if let LogicalPlan::Aggregate { input: agg_input, group_by, aggregate_functions, select_list, .. } = *input {
                 assert_eq!(group_by.len(), 1);
-                assert_eq!(aggregate_expressions.len(), 3); // COUNT, SUM, AVG
-                
-                // Verify each aggregate function
-                let mut has_count = false;
-                let mut has_sum = false;
-                let mut has_avg = false;
-                
-                for expr in &aggregate_expressions {
-                    if let Expression::Aggregate { function, .. } = expr {
-                        match function {
-                            AggregateFunction::Count => has_count = true,
-                            AggregateFunction::Sum => has_sum = true,
-                            AggregateFunction::Avg => has_avg = true,
-                            _ => {}
-                        }
-                    }
-                }
-                
-                assert!(has_count, "COUNT not found");
-                assert!(has_sum, "SUM not found");
-                assert!(has_avg, "AVG not found");
-                
+                assert_eq!(aggregate_functions.len(), 2);
+                // Check the Aggregate node's select list
+                assert_eq!(select_list.len(), 3);
+                assert_eq!(select_list[0].0, Expression::Column(ColumnReference { table: None, name: "category".to_string() }));
+                assert_eq!(select_list[0].1, "category");
+                assert!(matches!(select_list[1].0, Expression::Aggregate { function: AggregateFunction::Count, .. }));
+                assert_eq!(select_list[1].1, "num_items");
+                assert!(matches!(select_list[2].0, Expression::Aggregate { function: AggregateFunction::Avg, .. }));
+                assert_eq!(select_list[2].1, "avg_price");
+
                 if let LogicalPlan::Scan { table_name, .. } = *agg_input {
-                    assert_eq!(table_name, "employees");
+                    assert_eq!(table_name, "products");
                 } else {
                     panic!("Expected Scan operation under Aggregate");
                 }

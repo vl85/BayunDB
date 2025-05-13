@@ -29,13 +29,13 @@ fn parse_create_table(parser: &mut Parser) -> ParseResult<Statement> {
     let table_name = parser.parse_identifier()?;
     
     // Expect opening parenthesis
-    parser.expect_token(TokenType::LeftParen)?;
+    parser.expect_token(TokenType::LPAREN)?;
     
     // Parse column definitions
     let columns = parse_column_definitions(parser)?;
     
     // Expect closing parenthesis
-    parser.expect_token(TokenType::RightParen)?;
+    parser.expect_token(TokenType::RPAREN)?;
     
     // Optional semicolon
     if parser.current_token_is(TokenType::SEMICOLON) {
@@ -66,51 +66,35 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
     // Parse operation
     if parser.current_token_is(TokenType::ADD) {
         parser.next_token(); // Consume ADD
-        parser.expect_token(TokenType::COLUMN)?;
+        // Optional: check for COLUMN keyword
+        if parser.current_token_is(TokenType::COLUMN) {
+            parser.next_token(); // Consume COLUMN
+        }
         // Parse column definition (reuse CREATE TABLE logic)
         let col_def = {
             let name = parser.parse_identifier()?;
             let data_type = parse_data_type(parser)?;
-            // Parse optional constraints (reuse logic from parse_column_definitions)
+            // Parse optional constraints
             let mut nullable = true;
             let mut primary_key = false;
             let mut default_value = None;
-            while let Some(token) = &parser.current_token {
-                if let TokenType::IDENTIFIER(constraint) = &token.token_type {
-                    let constraint_str = constraint.clone();
-                    if constraint_str.eq_ignore_ascii_case("NOT") {
-                        parser.next_token();
-                        if let Some(next_token) = &parser.current_token {
-                            if let TokenType::IDENTIFIER(null_keyword) = &next_token.token_type {
-                                if null_keyword.eq_ignore_ascii_case("NULL") {
-                                    parser.next_token();
-                                    nullable = false;
-                                    continue;
-                                }
-                            }
-                        }
-                        return Err(ParseError::InvalidSyntax("Expected NULL after NOT".to_string()));
-                    } else if constraint_str.eq_ignore_ascii_case("PRIMARY") {
-                        parser.next_token();
-                        if let Some(next_token) = &parser.current_token {
-                            if let TokenType::IDENTIFIER(key_keyword) = &next_token.token_type {
-                                if key_keyword.eq_ignore_ascii_case("KEY") {
-                                    parser.next_token();
-                                    primary_key = true;
-                                    nullable = false;
-                                    continue;
-                                }
-                            }
-                        }
-                        return Err(ParseError::InvalidSyntax("Expected KEY after PRIMARY".to_string()));
-                    } else if constraint_str.eq_ignore_ascii_case("DEFAULT") {
-                        parser.next_token();
-                        let expr = super::parser_expressions::parse_expression(parser, 0)?;
-                        default_value = Some(expr);
-                        continue;
-                    }
+            loop { // Changed from while let Some(token)
+                if parser.current_token_is(TokenType::NOT) {
+                    parser.next_token(); // Consume NOT
+                    parser.expect_token(TokenType::NULL)?; // Expect NULL
+                    nullable = false;
+                } else if parser.current_token_is(TokenType::PRIMARY) {
+                    parser.next_token(); // Consume PRIMARY
+                    parser.expect_token(TokenType::KEY)?; // Expect KEY
+                    primary_key = true;
+                    nullable = false; // Primary keys are implicitly NOT NULL
+                } else if parser.current_token_is(TokenType::DEFAULT) {
+                    parser.next_token(); // Consume DEFAULT
+                    let expr = super::parser_expressions::parse_expression(parser, 0)?;
+                    default_value = Some(expr);
+                } else {
+                    break; // Not a known constraint keyword
                 }
-                break;
             }
             ColumnDef { name, data_type, nullable, primary_key, default_value }
         };
@@ -146,21 +130,7 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         let column_name = parser.parse_identifier()?;
         
         // Expect TYPE keyword
-        // current_token should now be pointing at where TYPE is expected.
-        match &parser.current_token {
-            Some(token) => {
-                if let TokenType::IDENTIFIER(ident_str) = &token.token_type {
-                    if ident_str.eq_ignore_ascii_case("TYPE") {
-                        parser.next_token(); // Consume TYPE keyword
-                    } else {
-                        return Err(ParseError::InvalidSyntax(format!("Expected TYPE keyword after ALTER COLUMN <name>, got IDENTIFIER('{}')", ident_str)));
-                    }
-                } else {
-                    return Err(ParseError::InvalidSyntax(format!("Expected TYPE keyword after ALTER COLUMN <name>, got {:?}", token.token_type)));
-                }
-            },
-            None => return Err(ParseError::EndOfInput), // Or a more specific error if current_token can't be None here
-        }
+        parser.expect_token(TokenType::TYPE)?;
         
         // Now current_token should be pointing at the start of the data type.
         let new_type = parse_data_type(parser)?;
@@ -190,46 +160,23 @@ fn parse_column_definitions(parser: &mut Parser) -> ParseResult<Vec<ColumnDef>> 
         let mut primary_key = false;
         let mut default_value = None;
         
-        while let Some(token) = &parser.current_token {
-            if let TokenType::IDENTIFIER(constraint) = &token.token_type {
-                let constraint_str = constraint.clone();
-                if constraint_str.eq_ignore_ascii_case("NOT") {
-                    parser.next_token(); // Consume NOT
-                    
-                    // Expect NULL identifier
-                    if let Some(next_token) = &parser.current_token {
-                        if let TokenType::IDENTIFIER(null_keyword) = &next_token.token_type {
-                            if null_keyword.eq_ignore_ascii_case("NULL") {
-                                parser.next_token(); // Consume NULL
-                                nullable = false;
-                                continue;
-                            }
-                        }
-                    }
-                    return Err(ParseError::InvalidSyntax("Expected NULL after NOT".to_string()));
-                } else if constraint_str.eq_ignore_ascii_case("PRIMARY") {
-                    parser.next_token(); // Consume PRIMARY
-                    
-                    // Expect KEY identifier
-                    if let Some(next_token) = &parser.current_token {
-                        if let TokenType::IDENTIFIER(key_keyword) = &next_token.token_type {
-                            if key_keyword.eq_ignore_ascii_case("KEY") {
-                                parser.next_token(); // Consume KEY
-                                primary_key = true;
-                                nullable = false; // Primary keys cannot be null
-                                continue;
-                            }
-                        }
-                    }
-                    return Err(ParseError::InvalidSyntax("Expected KEY after PRIMARY".to_string()));
-                } else if constraint_str.eq_ignore_ascii_case("DEFAULT") {
-                    parser.next_token();
-                    let expr = super::parser_expressions::parse_expression(parser, 0)?;
-                    default_value = Some(expr);
-                    continue;
-                }
+        loop { // Changed from while let Some(token)
+            if parser.current_token_is(TokenType::NOT) {
+                parser.next_token(); // Consume NOT
+                parser.expect_token(TokenType::NULL)?; // Expect NULL
+                nullable = false;
+            } else if parser.current_token_is(TokenType::PRIMARY) {
+                parser.next_token(); // Consume PRIMARY
+                parser.expect_token(TokenType::KEY)?; // Expect KEY
+                primary_key = true;
+                nullable = false; // Primary keys are implicitly NOT NULL
+            } else if parser.current_token_is(TokenType::DEFAULT) {
+                parser.next_token(); // Consume DEFAULT
+                let expr = super::parser_expressions::parse_expression(parser, 0)?;
+                default_value = Some(expr);
+            } else {
+                break; // Not a known constraint keyword
             }
-            break; // Not a constraint, so we're done
         }
         
         columns.push(ColumnDef {
@@ -254,66 +201,38 @@ fn parse_column_definitions(parser: &mut Parser) -> ParseResult<Vec<ColumnDef>> 
 
 /// Parse a SQL data type
 fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
-    match &parser.current_token {
-        Some(token) => {
-            match &token.token_type {
-                TokenType::INTEGER(_) => {
-                    parser.next_token();
-                    Ok(DataType::Integer)
-                },
-                TokenType::FLOAT(_) => {
-                    parser.next_token();
-                    Ok(DataType::Float)
-                },
-                TokenType::IDENTIFIER(type_name) => {
-                    let type_name = type_name.clone();
-                    parser.next_token();
-                    
-                    // Handle different data type names
-                    if type_name.eq_ignore_ascii_case("INT") || 
-                       type_name.eq_ignore_ascii_case("INTEGER") {
-                        Ok(DataType::Integer)
-                    } else if type_name.eq_ignore_ascii_case("REAL") || 
-                              type_name.eq_ignore_ascii_case("FLOAT") {
-                        Ok(DataType::Float)
-                    } else if type_name.eq_ignore_ascii_case("TEXT") || 
-                              type_name.eq_ignore_ascii_case("VARCHAR") || 
-                              type_name.eq_ignore_ascii_case("CHAR") {
-                        // Check for optional size parameter in parentheses
-                        if parser.current_token_is(TokenType::LeftParen) {
-                            parser.next_token(); // Consume left paren
-                            
-                            // For now, we're ignoring the size parameter
-                            if let Some(token) = &parser.current_token {
-                                if let TokenType::INTEGER(_) = token.token_type {
-                                    parser.next_token(); // Consume the size
-                                }
-                            }
-                            
-                            parser.expect_token(TokenType::RightParen)?;
-                        }
-                        
-                        Ok(DataType::Text)
-                    } else if type_name.eq_ignore_ascii_case("BOOLEAN") ||
-                              type_name.eq_ignore_ascii_case("BOOL") {
-                        Ok(DataType::Boolean)
-                    } else if type_name.eq_ignore_ascii_case("DATE") {
-                        Ok(DataType::Date)
-                    } else if type_name.eq_ignore_ascii_case("TIMESTAMP") {
-                        Ok(DataType::Timestamp)
-                    } else if type_name.eq_ignore_ascii_case("BLOB") ||
-                              type_name.eq_ignore_ascii_case("BINARY") {
-                        // Return error for unsupported BLOB type in the AST
-                        Err(ParseError::InvalidSyntax(format!("Unsupported data type: {}", type_name)))
-                    } else {
-                        Err(ParseError::InvalidSyntax(format!("Unknown data type: {}", type_name)))
-                    }
-                },
-                _ => Err(ParseError::UnexpectedToken(token.clone())),
-            }
-        },
-        None => Err(ParseError::EndOfInput),
+    let token_literal = parser.current_token_literal_or_err()?;
+    let type_name_upper = token_literal.to_uppercase();
+
+    // Determine base type
+    let base_data_type = match type_name_upper.as_str() {
+        "INTEGER" | "INT" => Ok(DataType::Integer),
+        "FLOAT" | "REAL" => Ok(DataType::Float),
+        "TEXT" | "VARCHAR" | "CHAR" => Ok(DataType::Text), // Will handle (size) after this match
+        "BOOLEAN" | "BOOL" => Ok(DataType::Boolean),
+        "DATE" => Ok(DataType::Date),
+        "TIME" => Ok(DataType::Time),
+        "TIMESTAMP" => Ok(DataType::Timestamp),
+        _ => Err(ParseError::InvalidSyntax(format!("Unknown data type: {}", token_literal))),
+    }?;
+
+    parser.next_token(); // Consume the token that formed the base type name
+
+    // Handle optional (size) parameter for text types AFTER consuming base type token
+    // This check needs to be specific to types that accept size parameters.
+    if (type_name_upper == "TEXT" || type_name_upper == "VARCHAR" || type_name_upper == "CHAR") 
+        && parser.current_token_is(TokenType::LPAREN) {
+        parser.next_token(); // Consume LPAREN
+        if parser.current_token_is(TokenType::INTEGER) {
+            // let _size_lit = parser.current_token_literal_or_err()?; // If needed for validation/use
+            parser.next_token(); // Consume INTEGER size
+        } else {
+            return Err(ParseError::InvalidSyntax(format!("Expected integer size for {} type parameter", type_name_upper)));
+        }
+        parser.expect_token(TokenType::RPAREN)?;
     }
+    
+    Ok(base_data_type)
 }
 
 #[cfg(test)]
@@ -391,29 +310,29 @@ mod tests {
             let id_col = &create_stmt.columns[0];
             assert_eq!(id_col.name, "id");
             assert_eq!(id_col.data_type, DataType::Integer);
-            assert_eq!(id_col.primary_key, true);
-            assert_eq!(id_col.nullable, false); // Primary keys should be non-nullable
+            assert!(id_col.primary_key);
+            assert!(!id_col.nullable); // Primary keys should be non-nullable
             
             // Check name column
             let name_col = &create_stmt.columns[1];
             assert_eq!(name_col.name, "name");
             assert_eq!(name_col.data_type, DataType::Text);
-            assert_eq!(name_col.primary_key, false);
-            assert_eq!(name_col.nullable, false);
+            assert!(!name_col.primary_key);
+            assert!(!name_col.nullable);
             
             // Check email column 
             let email_col = &create_stmt.columns[2];
             assert_eq!(email_col.name, "email");
             assert_eq!(email_col.data_type, DataType::Text);
-            assert_eq!(email_col.primary_key, false);
-            assert_eq!(email_col.nullable, true);
+            assert!(!email_col.primary_key);
+            assert!(email_col.nullable);
             
             // Check created_at column
             let created_col = &create_stmt.columns[3];
             assert_eq!(created_col.name, "created_at");
             assert_eq!(created_col.data_type, DataType::Timestamp);
-            assert_eq!(created_col.primary_key, false);
-            assert_eq!(created_col.nullable, true);
+            assert!(!created_col.primary_key);
+            assert!(created_col.nullable);
         } else {
             panic!("Expected CREATE TABLE statement");
         }
@@ -481,18 +400,25 @@ mod tests {
         
         // Test parsing literal number as data type (should use IDENTIFIER path)
         // The lexer produces TokenType::INTEGER for `123` not IDENTIFIER.
-        // parse_data_type expects an IDENTIFIER for type names unless it's a direct TokenType::INTEGER/FLOAT match.
-        // So, `CREATE TABLE t (c1 123)` would fail at `parse_data_type` if `123` is not an IDENTIFIER.
-        // However, the TokenType::INTEGER and TokenType::FLOAT arms in parse_data_type handle this.
-        let mut parser_int_literal = Parser::new("123"); // Lexer makes this TokenType::INTEGER(123)
+        // parse_data_type expects an IDENTIFIER for type names.
+        // Parsing a raw number like "123" as a type name should fail.
+        let mut parser_int_literal = Parser::new("123"); 
         let dt_int_result = parse_data_type(&mut parser_int_literal);
-        assert!(dt_int_result.is_ok());
-        assert_eq!(dt_int_result.unwrap(), DataType::Integer);
+        assert!(dt_int_result.is_err(), "Parsing '123' as a data type name should fail.");
+        if let Err(ParseError::InvalidSyntax(msg)) = dt_int_result {
+            assert!(msg.contains("Unknown data type: 123"), "Error message: {}", msg);
+        } else {
+            panic!("Expected InvalidSyntax for '123', got {:?}", dt_int_result);
+        }
 
-        let mut parser_float_literal = Parser::new("1.23"); // Lexer makes this TokenType::FLOAT(1.23)
+        let mut parser_float_literal = Parser::new("1.23"); 
         let dt_float_result = parse_data_type(&mut parser_float_literal);
-        assert!(dt_float_result.is_ok());
-        assert_eq!(dt_float_result.unwrap(), DataType::Float);
+        assert!(dt_float_result.is_err(), "Parsing '1.23' as a data type name should fail.");
+        if let Err(ParseError::InvalidSyntax(msg)) = dt_float_result {
+            assert!(msg.contains("Unknown data type: 1.23"), "Error message: {}", msg);
+        } else {
+            panic!("Expected InvalidSyntax for '1.23', got {:?}", dt_float_result);
+        }
     }
 
     #[test]
@@ -505,7 +431,7 @@ mod tests {
                 AlterTableOperation::AddColumn(ref col) => {
                     assert_eq!(col.name, "age");
                     assert_eq!(col.data_type, DataType::Integer);
-                    assert_eq!(col.nullable, false);
+                    assert!(!col.nullable);
                 },
                 _ => panic!("Expected AddColumn operation"),
             }
@@ -613,26 +539,24 @@ mod tests {
         let mut parser_missing_type = Parser::new(sql_missing_type_keyword);
         let result_missing_type = parse_alter(&mut parser_missing_type);
         assert!(result_missing_type.is_err());
-        if let Err(ParseError::InvalidSyntax(msg)) = result_missing_type {
-            assert!(msg.contains("Expected TYPE keyword"), "Error message: {}", msg);
+        if let Err(ParseError::ExpectedToken(expected_tt, found_token)) = result_missing_type {
+            assert_eq!(expected_tt, TokenType::TYPE, "Expected TokenType::TYPE to be missing");
+            assert_eq!(found_token.token_type, TokenType::IDENTIFIER("FLOAT".to_string()), "Found token should be IDENTIFIER(\"FLOAT\")");
         } else {
-            panic!("Expected InvalidSyntax error for missing TYPE keyword, got {:?}", result_missing_type);
+            panic!("Expected ParseError::ExpectedToken(TYPE, IDENTIFIER(\"FLOAT\")) error for missing TYPE keyword, got {:?}", result_missing_type);
         }
 
         let sql_missing_new_type = "ALTER TABLE products ALTER COLUMN price TYPE";
         let mut parser_missing_new_type = Parser::new(sql_missing_new_type);
         let result_missing_new_type = parse_alter(&mut parser_missing_new_type);
         assert!(result_missing_new_type.is_err());
-        // This should be an error from parse_data_type when it finds EOF instead of a type name.
-        if let Err(ParseError::UnexpectedToken(token)) = result_missing_new_type {
-            assert_eq!(token.token_type, TokenType::EOF, "Expected EOF token when data type is missing");
-        } else if let Err(ParseError::InvalidSyntax(msg)) = result_missing_new_type { 
-             // This path might be taken if parse_data_type has a more specific syntax error before EOF.
-             assert!(msg.contains("Expected a data type name") || msg.contains("Unknown data type"), "Error message: {}", msg);
-        } else if let Err(ParseError::EndOfInput) = result_missing_new_type { 
-            // This could also be a valid error if parse_data_type consumes nothing and current_token becomes None.
+        // If TYPE is the last token, parse_data_type will be called with current_token being EOF.
+        // current_token_literal_or_err() will yield Ok("").
+        // parse_data_type will then produce InvalidSyntax("Unknown data type: ")
+        if let Err(ParseError::InvalidSyntax(msg)) = result_missing_new_type {
+            assert_eq!(msg, "Unknown data type: ", "Error message mismatch for missing new data type");
         } else {
-            panic!("Expected UnexpectedToken(EOF), InvalidSyntax, or EndOfInput for missing new data type, got {:?}", result_missing_new_type);
+            panic!("Expected InvalidSyntax(\"Unknown data type: \") for missing new data type, got {:?}", result_missing_new_type);
         }
     }
 } 

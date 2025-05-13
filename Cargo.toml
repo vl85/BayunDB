@@ -107,6 +107,8 @@ log = "0.4"
 clap = { version = "4.3", features = ["derive"] }
 rustyline = "11.0"
 once_cell = "1.18"
+hex = "0.4"
+linked-hash-map = { version = "0.5", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3.2"

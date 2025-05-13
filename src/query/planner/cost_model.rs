@@ -3,9 +3,16 @@
 // This module provides cost estimation for query plans to aid optimization decisions.
 
 use crate::query::planner::physical_plan::PhysicalPlan;
+use crate::query::planner::physical_plan::PhysicalSelectExpression;
 
 /// A simple cost model for physical query plans
 pub struct CostModel;
+
+impl Default for CostModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CostModel {
     /// Create a new cost model
@@ -57,7 +64,13 @@ impl CostModel {
                 left_cost + right_cost + (left_cost.max(right_cost) * 0.2)
             }
             
-            PhysicalPlan::HashAggregate { input, .. } => {
+            PhysicalPlan::HashAggregate {
+                input,
+                group_by,
+                aggregate_select_expressions,
+                having,
+                output_select_list,
+            } => {
                 // Cost of input + aggregation overhead
                 let input_cost = self.estimate_cost(input);
                 input_cost + (input_cost * 0.3)  // 30% overhead for aggregation
@@ -70,6 +83,10 @@ impl CostModel {
             PhysicalPlan::AlterTable { .. } => {
                 // DDL operations like ALTER TABLE also have a fixed, minimal cost
                 10.0 // Assigning a similar small cost as CreateTable
+            }
+            PhysicalPlan::Sort { input, order_by } => {
+                // Cost of input + cost proportional to number of sort keys (simple version)
+                self.estimate_cost(input) + 20.0 * (order_by.len() as f64) + 50.0 // Base sort cost + per-key cost
             }
         }
     }
@@ -181,16 +198,35 @@ mod tests {
                     table: None,
                 })
             ],
-            aggregate_expressions: vec![
-                Expression::Aggregate {
-                    function: AggregateFunction::Sum,
-                    arg: Some(Box::new(Expression::Column(ColumnReference {
-                        name: "amount".to_string(),
-                        table: None,
-                    }))),
+            aggregate_select_expressions: vec![
+                PhysicalSelectExpression {
+                    expression: Expression::Aggregate {
+                        function: AggregateFunction::Sum,
+                        arg: Some(Box::new(Expression::Column(ColumnReference {
+                            name: "amount".to_string(),
+                            table: None,
+                        }))),
+                    },
+                    output_name: "SUM(amount)".to_string(),
                 }
             ],
             having: None,
+            output_select_list: vec![
+                PhysicalSelectExpression {
+                    expression: Expression::Column(ColumnReference { table: None, name: "customer_id".to_string() }),
+                    output_name: "customer_id".to_string(),
+                },
+                PhysicalSelectExpression {
+                    expression: Expression::Aggregate {
+                        function: AggregateFunction::Sum,
+                        arg: Some(Box::new(Expression::Column(ColumnReference {
+                            name: "amount".to_string(),
+                            table: None,
+                        }))),
+                    },
+                    output_name: "SUM(amount)".to_string(),
+                }
+            ]
         };
         
         // Calculate the cost
@@ -364,5 +400,52 @@ mod tests {
         let expected_cost = filter2_cost + (filter2_cost * 0.05); // Projection
         
         assert_eq!(cost, expected_cost);
+    }
+
+    #[test]
+    fn test_hash_aggregate_cost() {
+        // Test the cost estimation for a HashAggregate plan
+        let plan = PhysicalPlan::HashAggregate {
+            input: Box::new(PhysicalPlan::SeqScan { table_name: "test".to_string(), alias: None }),
+            group_by: vec![Expression::Column(ColumnReference { table: None, name: "customer_id".to_string() })],
+            aggregate_select_expressions: vec![
+                PhysicalSelectExpression {
+                    expression: Expression::Aggregate {
+                        function: AggregateFunction::Sum,
+                        arg: Some(Box::new(Expression::Column(ColumnReference {
+                            name: "amount".to_string(),
+                            table: None,
+                        }))),
+                    },
+                    output_name: "SUM(amount)".to_string(),
+                }
+            ],
+            having: None,
+            output_select_list: vec![
+                PhysicalSelectExpression {
+                    expression: Expression::Column(ColumnReference { table: None, name: "customer_id".to_string() }),
+                    output_name: "customer_id".to_string(),
+                },
+                PhysicalSelectExpression {
+                    expression: Expression::Aggregate {
+                        function: AggregateFunction::Sum,
+                        arg: Some(Box::new(Expression::Column(ColumnReference {
+                            name: "amount".to_string(),
+                            table: None,
+                        }))),
+                    },
+                    output_name: "SUM(amount)".to_string(),
+                }
+            ]
+        };
+        
+        let cost_model = CostModel::new();
+        let cost = cost_model.estimate_cost(&plan);
+        
+        // Verify the cost is calculated correctly
+        let expected_scan_cost = 100.0;
+        let expected_agg_cost = expected_scan_cost + (expected_scan_cost * 0.3);
+        
+        assert_eq!(cost, expected_agg_cost);
     }
 } 

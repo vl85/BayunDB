@@ -94,7 +94,7 @@ fn table_operations_benchmark(c: &mut Criterion) {
                 // Insert test records - use smaller records
                 for _i in 0..record_count {
                     let record = generate_test_record(20);
-                    if let Err(_) = page_manager.insert_record(&mut page_guard, &record) {
+                    if page_manager.insert_record(&mut page_guard, &record).is_err() {
                         // If we can't insert more records, break
                         break;
                     }

@@ -55,7 +55,7 @@ impl LogRecordIterator {
         
         // Find all log files
         let log_files = LogFileManager::find_log_files(config)
-            .map_err(|e| LogManagerError::FileError(e))?;
+            .map_err(LogManagerError::FileError)?;
         
         if log_files.is_empty() {
             return Ok(false);
@@ -71,11 +71,11 @@ impl LogRecordIterator {
             let mut file = OpenOptions::new()
                 .read(true)
                 .open(&path)
-                .map_err(|e| LogManagerError::IoError(e))?;
+                .map_err(LogManagerError::IoError)?;
             
             // Read the header to get the first LSN
             let header = crate::transaction::wal::log_components::log_file_manager::LogFileHeader::read_from(&mut file)
-                .map_err(|e| LogManagerError::IoError(e))?;
+                .map_err(LogManagerError::IoError)?;
             
             // Validate the header
             if !header.validate() {
@@ -90,7 +90,7 @@ impl LogRecordIterator {
                 if let Some((next_seq, _)) = log_files.iter().find(|(seq, _)| *seq > sequence) {
                     // Find the max LSN in this file
                     let file_size = file.metadata()
-                        .map_err(|e| LogManagerError::IoError(e))?
+                        .map_err(LogManagerError::IoError)?
                         .len();
                     
                     // If this is not just a header (means there are records in the file)
@@ -99,11 +99,11 @@ impl LogRecordIterator {
                         let mut temp_file = OpenOptions::new()
                             .read(true)
                             .open(&path)
-                            .map_err(|e| LogManagerError::IoError(e))?;
+                            .map_err(LogManagerError::IoError)?;
                         
                         // Find the max LSN in this file
                         let max_lsn = LogFileManager::find_max_lsn(&mut temp_file, header.header_size as u64)
-                            .map_err(|e| LogManagerError::FileError(e))?;
+                            .map_err(LogManagerError::FileError)?;
                         
                         // If the LSN we're looking for is in this file's range
                         if lsn <= max_lsn {
@@ -132,12 +132,10 @@ impl LogRecordIterator {
     
     /// Seek to the specified LSN within the current file
     fn seek_to_lsn(&mut self, target_lsn: u64) -> Result<()> {
-        if self.current_file.is_none() {
-            if !self.find_file_for_lsn(target_lsn)? {
-                // No files found, but that's okay for empty log
-                self.reached_end = true;
-                return Ok(());
-            }
+        if self.current_file.is_none() && !self.find_file_for_lsn(target_lsn)? {
+            // No files found, but that's okay for empty log
+            self.reached_end = true;
+            return Ok(());
         }
         
         // Get the file
@@ -145,20 +143,20 @@ impl LogRecordIterator {
         
         // Get the header to determine header size
         file.seek(SeekFrom::Start(0))
-            .map_err(|e| LogManagerError::IoError(e))?;
+            .map_err(LogManagerError::IoError)?;
         
         let header = LogFileHeader::read_from(file)
-            .map_err(|e| LogManagerError::IoError(e))?;
+            .map_err(LogManagerError::IoError)?;
         
         // Start from the beginning of the file (after the header)
         file.seek(SeekFrom::Start(header.header_size as u64))
-            .map_err(|e| LogManagerError::IoError(e))?;
+            .map_err(LogManagerError::IoError)?;
         
         self.current_position = header.header_size as u64;
         
         // Check file size to see if there are any records
         let file_size = file.metadata()
-            .map_err(|e| LogManagerError::IoError(e))?
+            .map_err(LogManagerError::IoError)?
             .len();
         
         // If the file only contains the header, there are no records to seek
@@ -181,7 +179,7 @@ impl LogRecordIterator {
                         let record_size = u32::from_le_bytes(size_bytes) as usize;
                         
                         // Validate record size to prevent malformed records
-                        if record_size < 8 || record_size > 1024 * 1024 {
+                        if !(8..=1024 * 1024).contains(&record_size) {
                             // Invalid record size, break and consider the log ended
                             self.reached_end = true;
                             break;
@@ -200,7 +198,7 @@ impl LogRecordIterator {
                                         if record.lsn >= target_lsn {
                                             // Found target LSN, rewind to start of this record
                                             file.seek(SeekFrom::Start(prev_position))
-                                                .map_err(|e| LogManagerError::IoError(e))?;
+                                                .map_err(LogManagerError::IoError)?;
                                             self.current_position = prev_position;
                                             found_lsn = true;
                                         }
@@ -252,18 +250,16 @@ impl LogRecordIterator {
             return Ok(None);
         }
         
-        if self.current_file.is_none() {
-            if !self.find_file_for_lsn(self.current_lsn)? {
-                self.reached_end = true;
-                return Ok(None);
-            }
+        if self.current_file.is_none() && !self.find_file_for_lsn(self.current_lsn)? {
+            self.reached_end = true;
+            return Ok(None);
         }
         
         let file = self.current_file.as_mut().unwrap();
         
         // Seek to the current position
         file.seek(SeekFrom::Start(self.current_position))
-            .map_err(|e| LogManagerError::IoError(e))?;
+            .map_err(LogManagerError::IoError)?;
         
         // Read the record size (4 bytes)
         let mut size_bytes = [0; 4];
@@ -280,7 +276,7 @@ impl LogRecordIterator {
                         
                         // Deserialize the record
                         let record = LogRecord::deserialize(&record_data)
-                            .map_err(|e| LogManagerError::LogRecordError(e))?;
+                            .map_err(LogManagerError::LogRecordError)?;
                         
                         // Update the current LSN
                         self.current_lsn = record.lsn + 1;

@@ -1,8 +1,13 @@
 // tests/integration/sql_alter_table_tests.rs
 
-use bayundb::query::executor::ExecutionEngine;
+// use bayundb::query::parser::parse; // unused
+// use bayundb::query::parser::ast::Statement; // unused
+// use bayundb::catalog::{Catalog, Column, DataType, Table}; // Column, DataType, Table unused by this file directly, but Catalog is used
+use bayundb::catalog::Catalog; // Keep only Catalog if others are not directly used, or keep all if indirect use is complex to track for now
+use bayundb::query::executor::engine::ExecutionEngine;
+// use bayundb::query::executor::result::{ DataValue, QueryResult, QueryResultSet }; // DataValue unused
+use bayundb::query::executor::result::{ QueryResult, QueryResultSet }; // QueryResult, QueryResultSet are used
 use bayundb::storage::buffer::BufferPoolManager;
-use bayundb::catalog::Catalog;
 use bayundb::transaction::concurrency::transaction_manager::TransactionManager;
 use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
 use bayundb::transaction::wal::log_buffer::LogBufferConfig;
@@ -44,13 +49,8 @@ fn setup_test_db() -> Result<(ExecutionEngine, TempDir)> {
     Ok((engine, temp_dir))
 }
 
-fn execute_query_assert_ok(engine: &ExecutionEngine, query: &str) -> bayundb::query::executor::result::QueryResultSet {
-    println!("Executing: {}", query);
-    let result = engine.execute_query(query);
-    if let Err(e) = &result {
-        eprintln!("Error executing query \"{}\": {:?}", query, e); // Log to stderr for test output visibility
-    }
-    result.expect("Query execution failed") // Use expect to panic on error, showing the query
+fn execute_query_in_test(engine: &ExecutionEngine, query: &str) -> QueryResult<QueryResultSet> {
+    engine.execute_query(query)
 }
 
 #[cfg(test)]
@@ -63,15 +63,15 @@ mod alter_table_add_column_tests {
         let (engine, _temp_dir) = setup_test_db()?;
 
         // 1. Create initial table and insert data
-        execute_query_assert_ok(&engine, "CREATE TABLE test_add_basic (id INT, name TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_basic VALUES (1, 'Alice');");
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_basic VALUES (2, 'Bob');");
+        execute_query_in_test(&engine, "CREATE TABLE test_add_basic (id INT, name TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_add_basic VALUES (1, 'Alice');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_add_basic VALUES (2, 'Bob');").unwrap();
 
         // 2. Add the new column
-        execute_query_assert_ok(&engine, "ALTER TABLE test_add_basic ADD COLUMN city TEXT;");
+        execute_query_in_test(&engine, "ALTER TABLE test_add_basic ADD COLUMN city TEXT;").unwrap();
 
         // 3. Verifications
-        let result = execute_query_assert_ok(&engine, "SELECT id, name, city FROM test_add_basic ORDER BY id;");
+        let result = execute_query_in_test(&engine, "SELECT id, name, city FROM test_add_basic ORDER BY id;").unwrap();
         assert_eq!(result.columns(), vec!["id", "name", "city"]);
         let rows = result.rows();
         assert_eq!(rows.len(), 2);
@@ -87,13 +87,13 @@ mod alter_table_add_column_tests {
         assert_eq!(rows[1].get("city"), Some(&DataValue::Null)); // Default NULL
 
         // Try inserting a new row including the new column
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_basic (id, name, city) VALUES (3, 'Charlie', 'New York');");
-        let result_charlie = execute_query_assert_ok(&engine, "SELECT city FROM test_add_basic WHERE id = 3;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_basic (id, name, city) VALUES (3, 'Charlie', 'New York');").unwrap();
+        let result_charlie = execute_query_in_test(&engine, "SELECT city FROM test_add_basic WHERE id = 3;").unwrap();
         assert_eq!(result_charlie.rows()[0].get("city"), Some(&DataValue::Text("New York".to_string())));
         
         // Try inserting a new row omitting the new column (should default to NULL)
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_basic (id, name) VALUES (4, 'David');");
-        let result_david = execute_query_assert_ok(&engine, "SELECT city FROM test_add_basic WHERE id = 4;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_basic (id, name) VALUES (4, 'David');").unwrap();
+        let result_david = execute_query_in_test(&engine, "SELECT city FROM test_add_basic WHERE id = 4;").unwrap();
         assert_eq!(result_david.rows()[0].get("city"), Some(&DataValue::Null));
 
         Ok(())
@@ -103,14 +103,14 @@ mod alter_table_add_column_tests {
     fn test_add_column_with_default() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
 
-        execute_query_assert_ok(&engine, "CREATE TABLE test_add_default (id INT, value INT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_default VALUES (1, 100);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_default VALUES (2, 200);");
+        execute_query_in_test(&engine, "CREATE TABLE test_add_default (id INT, value INT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_add_default VALUES (1, 100);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_add_default VALUES (2, 200);").unwrap();
 
-        execute_query_assert_ok(&engine, "ALTER TABLE test_add_default ADD COLUMN category TEXT DEFAULT 'General';");
+        execute_query_in_test(&engine, "ALTER TABLE test_add_default ADD COLUMN category TEXT DEFAULT 'General';").unwrap();
 
         // 1. Check existing rows - should have the default value
-        let result_existing = execute_query_assert_ok(&engine, "SELECT id, value, category FROM test_add_default ORDER BY id;");
+        let result_existing = execute_query_in_test(&engine, "SELECT id, value, category FROM test_add_default ORDER BY id;").unwrap();
         assert_eq!(result_existing.columns(), vec!["id", "value", "category"]);
         let rows_existing = result_existing.rows();
         assert_eq!(rows_existing.len(), 2);
@@ -118,26 +118,26 @@ mod alter_table_add_column_tests {
         assert_eq!(rows_existing[1].get("category"), Some(&DataValue::Text("General".to_string())));
 
         // 2. Insert a new row providing the new column
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_default (id, value, category) VALUES (3, 300, 'Specific');");
-        let result_new_provided = execute_query_assert_ok(&engine, "SELECT category FROM test_add_default WHERE id = 3;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_default (id, value, category) VALUES (3, 300, 'Specific');").unwrap();
+        let result_new_provided = execute_query_in_test(&engine, "SELECT category FROM test_add_default WHERE id = 3;").unwrap();
         assert_eq!(result_new_provided.rows()[0].get("category"), Some(&DataValue::Text("Specific".to_string())));
 
         // 3. Insert a new row omitting the new column (should use default)
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_default (id, value) VALUES (4, 400);");
-        let result_new_defaulted = execute_query_assert_ok(&engine, "SELECT category FROM test_add_default WHERE id = 4;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_default (id, value) VALUES (4, 400);").unwrap();
+        let result_new_defaulted = execute_query_in_test(&engine, "SELECT category FROM test_add_default WHERE id = 4;").unwrap();
         assert_eq!(result_new_defaulted.rows()[0].get("category"), Some(&DataValue::Text("General".to_string())));
         
         // 4. Add another column with a different default type (e.g. INT)
-        execute_query_assert_ok(&engine, "ALTER TABLE test_add_default ADD COLUMN quantity INT DEFAULT 0;");
-        let result_q_existing = execute_query_assert_ok(&engine, "SELECT quantity FROM test_add_default WHERE id = 1;");
+        execute_query_in_test(&engine, "ALTER TABLE test_add_default ADD COLUMN quantity INT DEFAULT 0;").unwrap();
+        let result_q_existing = execute_query_in_test(&engine, "SELECT quantity FROM test_add_default WHERE id = 1;").unwrap();
         assert_eq!(result_q_existing.rows()[0].get("quantity"), Some(&DataValue::Integer(0)));
         
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_default (id, value, category, quantity) VALUES (5, 500, 'Mixed', 50);");
-        let result_q_new = execute_query_assert_ok(&engine, "SELECT quantity FROM test_add_default WHERE id = 5;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_default (id, value, category, quantity) VALUES (5, 500, 'Mixed', 50);").unwrap();
+        let result_q_new = execute_query_in_test(&engine, "SELECT quantity FROM test_add_default WHERE id = 5;").unwrap();
         assert_eq!(result_q_new.rows()[0].get("quantity"), Some(&DataValue::Integer(50)));
 
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_default (id, value, category) VALUES (6, 600, 'NoQuantity');");
-        let result_q_defaulted = execute_query_assert_ok(&engine, "SELECT quantity FROM test_add_default WHERE id = 6;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_default (id, value, category) VALUES (6, 600, 'NoQuantity');").unwrap();
+        let result_q_defaulted = execute_query_in_test(&engine, "SELECT quantity FROM test_add_default WHERE id = 6;").unwrap();
         assert_eq!(result_q_defaulted.rows()[0].get("quantity"), Some(&DataValue::Integer(0)));
 
         Ok(())
@@ -147,15 +147,15 @@ mod alter_table_add_column_tests {
     fn test_add_column_not_null_with_default() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
 
-        execute_query_assert_ok(&engine, "CREATE TABLE test_add_not_null_default (id INT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_not_null_default VALUES (1);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_not_null_default VALUES (2);");
+        execute_query_in_test(&engine, "CREATE TABLE test_add_not_null_default (id INT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_add_not_null_default VALUES (1);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_add_not_null_default VALUES (2);").unwrap();
 
         // Add a NOT NULL column with a DEFAULT value. This should succeed, and existing rows get the default.
-        execute_query_assert_ok(&engine, "ALTER TABLE test_add_not_null_default ADD COLUMN name TEXT NOT NULL DEFAULT 'DefaultName';");
+        execute_query_in_test(&engine, "ALTER TABLE test_add_not_null_default ADD COLUMN name TEXT NOT NULL DEFAULT 'DefaultName';").unwrap();
 
         // 1. Check existing rows - should have the default value
-        let result_existing = execute_query_assert_ok(&engine, "SELECT id, name FROM test_add_not_null_default ORDER BY id;");
+        let result_existing = execute_query_in_test(&engine, "SELECT id, name FROM test_add_not_null_default ORDER BY id;").unwrap();
         assert_eq!(result_existing.columns(), vec!["id", "name"]);
         let rows_existing = result_existing.rows();
         assert_eq!(rows_existing.len(), 2);
@@ -163,13 +163,13 @@ mod alter_table_add_column_tests {
         assert_eq!(rows_existing[1].get("name"), Some(&DataValue::Text("DefaultName".to_string())));
 
         // 2. Insert a new row providing the new column
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_not_null_default (id, name) VALUES (3, 'SpecificName');");
-        let result_new_provided = execute_query_assert_ok(&engine, "SELECT name FROM test_add_not_null_default WHERE id = 3;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_not_null_default (id, name) VALUES (3, 'SpecificName');").unwrap();
+        let result_new_provided = execute_query_in_test(&engine, "SELECT name FROM test_add_not_null_default WHERE id = 3;").unwrap();
         assert_eq!(result_new_provided.rows()[0].get("name"), Some(&DataValue::Text("SpecificName".to_string())));
 
         // 3. Insert a new row omitting the new column (should use default, and satisfy NOT NULL)
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_not_null_default (id) VALUES (4);");
-        let result_new_defaulted = execute_query_assert_ok(&engine, "SELECT name FROM test_add_not_null_default WHERE id = 4;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_not_null_default (id) VALUES (4);").unwrap();
+        let result_new_defaulted = execute_query_in_test(&engine, "SELECT name FROM test_add_not_null_default WHERE id = 4;").unwrap();
         assert_eq!(result_new_defaulted.rows()[0].get("name"), Some(&DataValue::Text("DefaultName".to_string())));
 
         Ok(())
@@ -178,8 +178,8 @@ mod alter_table_add_column_tests {
     #[test]
     fn test_add_column_not_null_no_default_fails_on_non_empty_table() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_add_nn_nd_fail (id INT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_nn_nd_fail VALUES (1);");
+        execute_query_in_test(&engine, "CREATE TABLE test_add_nn_nd_fail (id INT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_add_nn_nd_fail VALUES (1);").unwrap();
 
         let result = engine.execute_query("ALTER TABLE test_add_nn_nd_fail ADD COLUMN new_col TEXT NOT NULL;");
         assert!(result.is_err(), "Expected error when adding NOT NULL column without DEFAULT to non-empty table");
@@ -198,9 +198,9 @@ mod alter_table_add_column_tests {
     #[test]
     fn test_add_column_not_null_no_default_succeeds_on_empty_table() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_add_nn_nd_empty (id INT);");
+        execute_query_in_test(&engine, "CREATE TABLE test_add_nn_nd_empty (id INT);").unwrap();
         // Table is empty
-        execute_query_assert_ok(&engine, "ALTER TABLE test_add_nn_nd_empty ADD COLUMN new_col TEXT NOT NULL;");
+        execute_query_in_test(&engine, "ALTER TABLE test_add_nn_nd_empty ADD COLUMN new_col TEXT NOT NULL;").unwrap();
         
         // Insert should now require the new column or fail if it's not provided and has no default (which it doesn't)
         let insert_fail_result = engine.execute_query("INSERT INTO test_add_nn_nd_empty (id) VALUES (1);");
@@ -208,8 +208,8 @@ mod alter_table_add_column_tests {
         // This error might come from catalog validation during INSERT planning/execution, not from ADD COLUMN itself.
         // The exact error type might vary. For now, we check it's an error.
 
-        execute_query_assert_ok(&engine, "INSERT INTO test_add_nn_nd_empty (id, new_col) VALUES (2, 'NonNullValue');");
-        let select_result = execute_query_assert_ok(&engine, "SELECT new_col FROM test_add_nn_nd_empty WHERE id = 2;");
+        execute_query_in_test(&engine, "INSERT INTO test_add_nn_nd_empty (id, new_col) VALUES (2, 'NonNullValue');").unwrap();
+        let select_result = execute_query_in_test(&engine, "SELECT new_col FROM test_add_nn_nd_empty WHERE id = 2;").unwrap();
         assert_eq!(select_result.rows()[0].get("new_col"), Some(&DataValue::Text("NonNullValue".to_string())));
         Ok(())
     }
@@ -217,7 +217,7 @@ mod alter_table_add_column_tests {
     #[test]
     fn test_add_column_already_exists_fails() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_add_exists (id INT, name TEXT);");
+        execute_query_in_test(&engine, "CREATE TABLE test_add_exists (id INT, name TEXT);").unwrap();
         let result = engine.execute_query("ALTER TABLE test_add_exists ADD COLUMN name INT;"); // Attempt to add existing 'name'
         assert!(result.is_err(), "Expected error when adding a column that already exists.");
         match result.unwrap_err() {
@@ -238,13 +238,13 @@ mod alter_table_drop_column_tests {
     #[test]
     fn test_drop_column_basic() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_drop_basic (id INT, name TEXT, age INT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_drop_basic VALUES (1, 'Alice', 30);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_drop_basic VALUES (2, 'Bob', 25);");
+        execute_query_in_test(&engine, "CREATE TABLE test_drop_basic (id INT, name TEXT, age INT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_drop_basic VALUES (1, 'Alice', 30);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_drop_basic VALUES (2, 'Bob', 25);").unwrap();
 
-        execute_query_assert_ok(&engine, "ALTER TABLE test_drop_basic DROP COLUMN name;");
+        execute_query_in_test(&engine, "ALTER TABLE test_drop_basic DROP COLUMN name;").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT id, age FROM test_drop_basic ORDER BY id;");
+        let result = execute_query_in_test(&engine, "SELECT id, age FROM test_drop_basic ORDER BY id;").unwrap();
         assert_eq!(result.columns(), vec!["id", "age"]);
         let rows = result.rows();
         assert_eq!(rows.len(), 2);
@@ -255,12 +255,12 @@ mod alter_table_drop_column_tests {
 
         // Verify that selecting the dropped column fails or returns nothing relevant (parser/planner should ideally prevent this).
         // For now, we check that the column is not in the new result set.
-        let res_after_drop = execute_query_assert_ok(&engine, "SELECT * FROM test_drop_basic WHERE id = 1;");
+        let res_after_drop = execute_query_in_test(&engine, "SELECT * FROM test_drop_basic WHERE id = 1;").unwrap();
         assert!(res_after_drop.rows()[0].get("name").is_none(), "'name' column should not exist after drop.");
 
         // Insert new data, should only accept new schema
-        execute_query_assert_ok(&engine, "INSERT INTO test_drop_basic (id, age) VALUES (3, 40);");
-        let result_new = execute_query_assert_ok(&engine, "SELECT age FROM test_drop_basic WHERE id = 3;");
+        execute_query_in_test(&engine, "INSERT INTO test_drop_basic (id, age) VALUES (3, 40);").unwrap();
+        let result_new = execute_query_in_test(&engine, "SELECT age FROM test_drop_basic WHERE id = 3;").unwrap();
         assert_eq!(result_new.rows()[0].get("age"), Some(&DataValue::Integer(40)));
 
         Ok(())
@@ -269,12 +269,12 @@ mod alter_table_drop_column_tests {
     #[test]
     fn test_drop_middle_column() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_drop_middle (id INT, name TEXT, age INT, city TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_drop_middle VALUES (1, 'Eve', 28, 'London');");
+        execute_query_in_test(&engine, "CREATE TABLE test_drop_middle (id INT, name TEXT, age INT, city TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_drop_middle VALUES (1, 'Eve', 28, 'London');").unwrap();
         
-        execute_query_assert_ok(&engine, "ALTER TABLE test_drop_middle DROP COLUMN age;");
+        execute_query_in_test(&engine, "ALTER TABLE test_drop_middle DROP COLUMN age;").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT id, name, city FROM test_drop_middle;");
+        let result = execute_query_in_test(&engine, "SELECT id, name, city FROM test_drop_middle;").unwrap();
         assert_eq!(result.columns(), vec!["id", "name", "city"]);
         assert_eq!(result.rows()[0].get("name"), Some(&DataValue::Text("Eve".to_string())));
         assert_eq!(result.rows()[0].get("city"), Some(&DataValue::Text("London".to_string())));
@@ -285,19 +285,19 @@ mod alter_table_drop_column_tests {
     #[test]
     fn test_drop_last_column() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_drop_last (id INT, name TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_drop_last VALUES (1, 'LastCol');");
+        execute_query_in_test(&engine, "CREATE TABLE test_drop_last (id INT, name TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_drop_last VALUES (1, 'LastCol');").unwrap();
         
-        execute_query_assert_ok(&engine, "ALTER TABLE test_drop_last DROP COLUMN name;");
+        execute_query_in_test(&engine, "ALTER TABLE test_drop_last DROP COLUMN name;").unwrap();
         
-        let result = execute_query_assert_ok(&engine, "SELECT id FROM test_drop_last;");
+        let result = execute_query_in_test(&engine, "SELECT id FROM test_drop_last;").unwrap();
         assert_eq!(result.columns(), vec!["id"]);
         assert_eq!(result.rows()[0].get("id"), Some(&DataValue::Integer(1)));
 
         // Attempting to drop the final column should now result in a specific error
         // The SELECT * from the original version of the test was here.
         // Let's verify the state of the table just before trying to drop the last column.
-        let result_before_final_drop = execute_query_assert_ok(&engine, "SELECT * FROM test_drop_last;");
+        let result_before_final_drop = execute_query_in_test(&engine, "SELECT * FROM test_drop_last;").unwrap();
         assert_eq!(result_before_final_drop.columns().len(), 1); // This was the failing line (assert_eq!(..., 0))
         assert_eq!(result_before_final_drop.columns()[0], "id");
         assert_eq!(result_before_final_drop.rows().len(), 1); 
@@ -318,7 +318,7 @@ mod alter_table_drop_column_tests {
     #[test]
     fn test_drop_non_existent_column_fails() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_drop_non_exist (id INT);");
+        execute_query_in_test(&engine, "CREATE TABLE test_drop_non_exist (id INT);").unwrap();
         let result = engine.execute_query("ALTER TABLE test_drop_non_exist DROP COLUMN missing_col;");
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -340,19 +340,19 @@ mod alter_table_rename_column_tests {
     #[test]
     fn test_rename_column_basic() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_rename_basic (id INT, old_name TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO test_rename_basic VALUES (1, 'InitialName');");
+        execute_query_in_test(&engine, "CREATE TABLE test_rename_basic (id INT, old_name TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO test_rename_basic VALUES (1, 'InitialName');").unwrap();
 
-        execute_query_assert_ok(&engine, "ALTER TABLE test_rename_basic RENAME COLUMN old_name TO new_name;");
+        execute_query_in_test(&engine, "ALTER TABLE test_rename_basic RENAME COLUMN old_name TO new_name;").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT id, new_name FROM test_rename_basic;");
+        let result = execute_query_in_test(&engine, "SELECT id, new_name FROM test_rename_basic;").unwrap();
         assert_eq!(result.columns(), vec!["id", "new_name"]);
         assert_eq!(result.rows()[0].get("new_name"), Some(&DataValue::Text("InitialName".to_string())));
 
         // Selecting by old name should fail (or not return the column)
         // Depending on strictness, this could be a parse error or planner error.
         // For now, check that it's not in the * projection.
-        let result_star = execute_query_assert_ok(&engine, "SELECT * FROM test_rename_basic;");
+        let result_star = execute_query_in_test(&engine, "SELECT * FROM test_rename_basic;").unwrap();
         assert!(result_star.rows()[0].get("old_name").is_none());
         assert!(result_star.rows()[0].get("new_name").is_some());
 
@@ -362,7 +362,7 @@ mod alter_table_rename_column_tests {
     #[test]
     fn test_rename_column_to_existing_name_fails() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_rename_conflict (id INT, name TEXT, description TEXT);");
+        execute_query_in_test(&engine, "CREATE TABLE test_rename_conflict (id INT, name TEXT, description TEXT);").unwrap();
         let result = engine.execute_query("ALTER TABLE test_rename_conflict RENAME COLUMN description TO name;");
         assert!(result.is_err());
         // Expecting a specific error related to duplicate column name from catalog or execution engine
@@ -378,7 +378,7 @@ mod alter_table_rename_column_tests {
     #[test]
     fn test_rename_non_existent_column_fails() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE test_rename_non_exist (id INT);");
+        execute_query_in_test(&engine, "CREATE TABLE test_rename_non_exist (id INT);").unwrap();
         let result = engine.execute_query("ALTER TABLE test_rename_non_exist RENAME COLUMN missing_col TO new_missing_col;");
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -442,16 +442,16 @@ mod alter_table_alter_column_type_tests {
     fn test_alter_column_type_int_to_float() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
 
-        execute_query_assert_ok(&engine, "CREATE TABLE type_change_test (id INT, val INT);");
-        execute_query_assert_ok(&engine, "INSERT INTO type_change_test VALUES (1, 10);");
-        execute_query_assert_ok(&engine, "INSERT INTO type_change_test VALUES (2, -5);");
-        execute_query_assert_ok(&engine, "INSERT INTO type_change_test VALUES (3, 0);");
+        execute_query_in_test(&engine, "CREATE TABLE type_change_test (id INT, val INT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO type_change_test VALUES (1, 10);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO type_change_test VALUES (2, -5);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO type_change_test VALUES (3, 0);").unwrap();
 
         // Alter column 'val' from INT to FLOAT
-        execute_query_assert_ok(&engine, "ALTER TABLE type_change_test ALTER COLUMN val TYPE FLOAT;");
+        execute_query_in_test(&engine, "ALTER TABLE type_change_test ALTER COLUMN val TYPE FLOAT;").unwrap();
 
         // Verify data conversion and schema
-        let result = execute_query_assert_ok(&engine, "SELECT id, val FROM type_change_test ORDER BY id;");
+        let result = execute_query_in_test(&engine, "SELECT id, val FROM type_change_test ORDER BY id;").unwrap();
         assert_eq!(result.columns(), vec!["id", "val"]);
         let rows = result.rows();
         assert_eq!(rows.len(), 3);
@@ -466,8 +466,8 @@ mod alter_table_alter_column_type_tests {
         assert_eq!(rows[2].get("val"), Some(&DataValue::Float(0.0)));
 
         // Insert new data with float type
-        execute_query_assert_ok(&engine, "INSERT INTO type_change_test (id, val) VALUES (4, 123.45);");
-        let result_new = execute_query_assert_ok(&engine, "SELECT val FROM type_change_test WHERE id = 4;");
+        execute_query_in_test(&engine, "INSERT INTO type_change_test (id, val) VALUES (4, 123.45);").unwrap();
+        let result_new = execute_query_in_test(&engine, "SELECT val FROM type_change_test WHERE id = 4;").unwrap();
         assert_eq!(result_new.rows()[0].get("val"), Some(&DataValue::Float(123.45)));
 
         // Check catalog (conceptual - actual check might be more direct if catalog API allows type inspection easily)
@@ -479,29 +479,40 @@ mod alter_table_alter_column_type_tests {
     #[test]
     fn test_alter_column_type_text_to_int_valid() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_text_to_int (val TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_int VALUES ('123');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_int VALUES ('-456');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_int VALUES (NULL);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_int VALUES ('0');");
-        execute_query_assert_ok(&engine, "ALTER TABLE tt_text_to_int ALTER COLUMN val TYPE INT;");
+        execute_query_in_test(&engine, "CREATE TABLE tt_text_to_int (val TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_int VALUES ('123');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_int VALUES ('-456');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_int VALUES (NULL);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_int VALUES ('0');").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT val FROM tt_text_to_int ORDER BY CASE WHEN val IS NULL THEN 0 ELSE 1 END, val;"); // Order NULLs first
-        let rows = result.rows();
-        assert_eq!(rows.len(), 4);
-        assert_eq!(rows[0].get("val"), Some(&DataValue::Null));
-        assert_eq!(rows[1].get("val"), Some(&DataValue::Integer(-456)));
-        assert_eq!(rows[2].get("val"), Some(&DataValue::Integer(0)));
-        assert_eq!(rows[3].get("val"), Some(&DataValue::Integer(123)));
+        execute_query_in_test(&engine, "ALTER TABLE tt_text_to_int ALTER COLUMN val TYPE INT;").unwrap();
+
+        let result = execute_query_in_test(&engine, "SELECT val FROM tt_text_to_int ORDER BY CASE WHEN val IS NULL THEN 0 ELSE 1 END, val;").unwrap();
+        
+        let expected_after_alter = [("val", Some(DataValue::Null)),
+            ("val", Some(DataValue::Integer(-456))),
+            ("val", Some(DataValue::Integer(0))),
+            ("val", Some(DataValue::Integer(123)))];
+
+        assert_eq!(result.columns().len(), 1);
+        assert_eq!(result.rows().len(), expected_after_alter.len());
+
+        for (idx, (col_name, expected_val_opt)) in expected_after_alter.iter().enumerate() {
+            let row = &result.rows()[idx]; 
+            let expected_val_ref = expected_val_opt.as_ref();
+            assert_eq!(row.get(col_name), expected_val_ref,
+                       "Mismatch at row {}, col '{}': Expected {:?}, got {:?}", 
+                       idx, col_name, expected_val_ref, row.get(col_name));
+        }
         Ok(())
     }
 
     #[test]
     fn test_alter_column_type_text_to_int_invalid_fails() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_text_to_int_fail (val TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_int_fail VALUES ('123');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_int_fail VALUES ('abc');"); // Invalid int
+        execute_query_in_test(&engine, "CREATE TABLE tt_text_to_int_fail (val TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_int_fail VALUES ('123');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_int_fail VALUES ('abc');").unwrap(); // Invalid int
 
         let alter_result = engine.execute_query("ALTER TABLE tt_text_to_int_fail ALTER COLUMN val TYPE INT;");
         assert!(alter_result.is_err());
@@ -517,13 +528,13 @@ mod alter_table_alter_column_type_tests {
     #[test]
     fn test_alter_column_type_int_to_text() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_int_to_text (val INT);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_int_to_text VALUES (123);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_int_to_text VALUES (-456);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_int_to_text VALUES (0);");
-        execute_query_assert_ok(&engine, "ALTER TABLE tt_int_to_text ALTER COLUMN val TYPE TEXT;");
+        execute_query_in_test(&engine, "CREATE TABLE tt_int_to_text (val INT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_int_to_text VALUES (123);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_int_to_text VALUES (-456);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_int_to_text VALUES (0);").unwrap();
+        execute_query_in_test(&engine, "ALTER TABLE tt_int_to_text ALTER COLUMN val TYPE TEXT;").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT val FROM tt_int_to_text ORDER BY val;"); // Text sort
+        let result = execute_query_in_test(&engine, "SELECT val FROM tt_int_to_text ORDER BY val;").unwrap(); // Text sort
         let rows = result.rows();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].get("val"), Some(&DataValue::Text("-456".to_string())));
@@ -535,31 +546,42 @@ mod alter_table_alter_column_type_tests {
     #[test]
     fn test_alter_column_type_float_to_int_truncation() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_float_to_int (val FLOAT);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_float_to_int VALUES (123.789);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_float_to_int VALUES (-456.123);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_float_to_int VALUES (0.0);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_float_to_int VALUES (NULL);");
-        execute_query_assert_ok(&engine, "ALTER TABLE tt_float_to_int ALTER COLUMN val TYPE INT;");
+        execute_query_in_test(&engine, "CREATE TABLE tt_float_to_int (val FLOAT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_float_to_int VALUES (123.789);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_float_to_int VALUES (-456.123);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_float_to_int VALUES (0.0);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_float_to_int VALUES (NULL);").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT val FROM tt_float_to_int ORDER BY CASE WHEN val IS NULL THEN 0 ELSE 1 END, val;");
-        let rows = result.rows();
-        assert_eq!(rows.len(), 4);
-        assert_eq!(rows[0].get("val"), Some(&DataValue::Null));
-        assert_eq!(rows[1].get("val"), Some(&DataValue::Integer(-456))); // Truncated
-        assert_eq!(rows[2].get("val"), Some(&DataValue::Integer(0)));
-        assert_eq!(rows[3].get("val"), Some(&DataValue::Integer(123))); // Truncated
+        execute_query_in_test(&engine, "ALTER TABLE tt_float_to_int ALTER COLUMN val TYPE INT;").unwrap();
+
+        let result = execute_query_in_test(&engine, "SELECT val FROM tt_float_to_int ORDER BY CASE WHEN val IS NULL THEN 0 ELSE 1 END, val;").unwrap();
+        
+        let expected_after_alter = [("val", Some(DataValue::Null)),
+            ("val", Some(DataValue::Integer(-456))),
+            ("val", Some(DataValue::Integer(0))),
+            ("val", Some(DataValue::Integer(123)))];
+
+        assert_eq!(result.columns().len(), 1);
+        assert_eq!(result.rows().len(), expected_after_alter.len());
+
+        for (idx, (col_name, expected_val_opt)) in expected_after_alter.iter().enumerate() {
+            let row = &result.rows()[idx]; 
+            let expected_val_ref = expected_val_opt.as_ref(); 
+            assert_eq!(row.get(col_name), expected_val_ref,
+                       "Mismatch at row {}, col '{}': Expected {:?}, got {:?}", 
+                       idx, col_name, expected_val_ref, row.get(col_name));
+        }
         Ok(())
     }
 
     #[test]
     fn test_alter_column_type_to_same_type() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_same_type (val INT);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_same_type VALUES (10);");
-        execute_query_assert_ok(&engine, "ALTER TABLE tt_same_type ALTER COLUMN val TYPE INT;"); // Alter to same type
+        execute_query_in_test(&engine, "CREATE TABLE tt_same_type (val INT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_same_type VALUES (10);").unwrap();
+        execute_query_in_test(&engine, "ALTER TABLE tt_same_type ALTER COLUMN val TYPE INT;").unwrap(); // Alter to same type
 
-        let result = execute_query_assert_ok(&engine, "SELECT val FROM tt_same_type;");
+        let result = execute_query_in_test(&engine, "SELECT val FROM tt_same_type;").unwrap();
         assert_eq!(result.rows()[0].get("val"), Some(&DataValue::Integer(10)));
         Ok(())
     }
@@ -567,13 +589,13 @@ mod alter_table_alter_column_type_tests {
     #[test]
     fn test_alter_column_type_bool_to_text() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_bool_to_text (val BOOLEAN);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_bool_to_text VALUES (TRUE);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_bool_to_text VALUES (FALSE);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_bool_to_text VALUES (NULL);");
-        execute_query_assert_ok(&engine, "ALTER TABLE tt_bool_to_text ALTER COLUMN val TYPE TEXT;");
+        execute_query_in_test(&engine, "CREATE TABLE tt_bool_to_text (val BOOLEAN);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_bool_to_text VALUES (TRUE);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_bool_to_text VALUES (FALSE);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_bool_to_text VALUES (NULL);").unwrap();
+        execute_query_in_test(&engine, "ALTER TABLE tt_bool_to_text ALTER COLUMN val TYPE TEXT;").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT val FROM tt_bool_to_text ORDER BY val;");
+        let result = execute_query_in_test(&engine, "SELECT val FROM tt_bool_to_text ORDER BY val;").unwrap();
         let rows = result.rows();
         assert_eq!(rows.len(), 3);
         // Order will be alphabetical: "false", "true", NULL (or however NULLs sort by default string comparison)
@@ -591,17 +613,17 @@ mod alter_table_alter_column_type_tests {
     #[test]
     fn test_alter_column_type_text_to_bool_valid() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_text_to_bool (val TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool VALUES ('true');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool VALUES ('FALSE');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool VALUES ('t');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool VALUES ('F');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool VALUES ('1');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool VALUES ('0');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool VALUES (NULL);");
-        execute_query_assert_ok(&engine, "ALTER TABLE tt_text_to_bool ALTER COLUMN val TYPE BOOLEAN;");
+        execute_query_in_test(&engine, "CREATE TABLE tt_text_to_bool (val TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool VALUES ('true');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool VALUES ('FALSE');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool VALUES ('t');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool VALUES ('F');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool VALUES ('1');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool VALUES ('0');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool VALUES (NULL);").unwrap();
+        execute_query_in_test(&engine, "ALTER TABLE tt_text_to_bool ALTER COLUMN val TYPE BOOLEAN;").unwrap();
 
-        let result = execute_query_assert_ok(&engine, "SELECT val FROM tt_text_to_bool;");
+        let result = execute_query_in_test(&engine, "SELECT val FROM tt_text_to_bool;").unwrap();
         let rows = result.rows();
         assert_eq!(rows.len(), 7);
         // Values are not ordered by select, so check against input order or collect and check presence
@@ -619,9 +641,9 @@ mod alter_table_alter_column_type_tests {
     #[test]
     fn test_alter_column_type_text_to_bool_invalid_fails() -> Result<()> {
         let (engine, _temp_dir) = setup_test_db()?;
-        execute_query_assert_ok(&engine, "CREATE TABLE tt_text_to_bool_fail (val TEXT);");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool_fail VALUES ('true');");
-        execute_query_assert_ok(&engine, "INSERT INTO tt_text_to_bool_fail VALUES ('notabool');");
+        execute_query_in_test(&engine, "CREATE TABLE tt_text_to_bool_fail (val TEXT);").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool_fail VALUES ('true');").unwrap();
+        execute_query_in_test(&engine, "INSERT INTO tt_text_to_bool_fail VALUES ('notabool');").unwrap();
 
         let alter_result = engine.execute_query("ALTER TABLE tt_text_to_bool_fail ALTER COLUMN val TYPE BOOLEAN;");
         assert!(alter_result.is_err());

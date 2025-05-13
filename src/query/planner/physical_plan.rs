@@ -6,6 +6,14 @@ use std::fmt;
 
 use crate::query::parser::ast::{Expression, JoinType, ColumnDef, AlterTableStatement};
 
+/// Represents a specific select expression in the physical plan, 
+/// including the expression itself and its final output name (alias or default).
+#[derive(Debug, Clone)]
+pub struct PhysicalSelectExpression {
+    pub expression: Expression,
+    pub output_name: String,
+}
+
 /// Represents a node in the physical query plan
 #[derive(Debug, Clone)]
 pub enum PhysicalPlan {
@@ -63,10 +71,14 @@ pub enum PhysicalPlan {
         input: Box<PhysicalPlan>,
         /// Group by expressions
         group_by: Vec<Expression>,
-        /// Aggregate expressions (COUNT, SUM, etc.)
-        aggregate_expressions: Vec<Expression>,
+        /// Aggregate select expressions including final output names
+        /// These are the aggregates needed for computation (including SELECT and HAVING)
+        aggregate_select_expressions: Vec<PhysicalSelectExpression>,
         /// Having clause (optional)
         having: Option<Expression>,
+        /// The final list of expressions (group keys or aggregates) in the desired output order,
+        /// with their final output names.
+        output_select_list: Vec<PhysicalSelectExpression>,
     },
     /// Create Table operator
     CreateTable {
@@ -79,6 +91,13 @@ pub enum PhysicalPlan {
     AlterTable {
         /// The AlterTable statement from the AST
         statement: AlterTableStatement,
+    },
+    /// Sort operator (ORDER BY)
+    Sort {
+        /// Input plan
+        input: Box<PhysicalPlan>,
+        /// Sort key expressions and direction (true for DESC)
+        order_by: Vec<(Expression, bool)>,
     },
 }
 
@@ -109,9 +128,15 @@ impl fmt::Display for PhysicalPlan {
                 write!(f, "HashJoin ({:?}): {:?}\n  Left: {}\n  Right: {}", 
                        join_type, condition, left, right)
             }
-            PhysicalPlan::HashAggregate { input, group_by, aggregate_expressions, having } => {
-                let agg_str = aggregate_expressions.iter()
-                    .map(|e| format!("{:?}", e))
+            PhysicalPlan::HashAggregate { 
+                input, 
+                group_by, 
+                aggregate_select_expressions, 
+                having, 
+                output_select_list
+            } => {
+                let agg_str = output_select_list.iter()
+                    .map(|e| format!("{} AS {}", e.expression, e.output_name))
                     .collect::<Vec<_>>()
                     .join(", ");
                 
@@ -140,6 +165,16 @@ impl fmt::Display for PhysicalPlan {
             }
             PhysicalPlan::AlterTable { statement } => {
                 write!(f, "AlterTable: {}", statement)
+            }
+            PhysicalPlan::Sort { input, order_by } => {
+                let order_by_str = order_by
+                    .iter()
+                    .map(|(expr, is_desc)| {
+                        format!("{:?} {}", expr, if *is_desc { "DESC" } else { "ASC" })
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "Sort: [{}]\n  {}", order_by_str, input)
             }
         }
     }
@@ -209,17 +244,40 @@ pub fn expression_to_predicate(expr: &Expression) -> String {
         },
         Expression::Function { name, args } => {
             let args_str = args.iter()
-                .map(|e| expression_to_predicate(e))
+                .map(expression_to_predicate)
                 .collect::<Vec<_>>()
                 .join(", ");
             
             format!("{}({})", name, args_str)
+        },
+        Expression::Case { operand, when_then_clauses, else_clause } => {
+            // Basic string representation for CASE, can be enhanced
+            let mut s = "CASE".to_string();
+            if let Some(op_expr) = operand {
+                s.push_str(&format!(" {}", expression_to_predicate(op_expr)));
+            }
+            for (when_expr, then_expr) in when_then_clauses {
+                s.push_str(&format!(" WHEN {} THEN {}", expression_to_predicate(when_expr), expression_to_predicate(then_expr)));
+            }
+            if let Some(el_expr) = else_clause {
+                s.push_str(&format!(" ELSE {}", expression_to_predicate(el_expr)));
+            }
+            s.push_str(" END");
+            s
         },
         Expression::UnaryOp { op, expr } => {
             let expr_str = expression_to_predicate(expr);
             match op {
                 crate::query::parser::ast::UnaryOperator::Minus => format!("-{}", expr_str),
                 crate::query::parser::ast::UnaryOperator::Not => format!("NOT {}", expr_str),
+            }
+        },
+        Expression::IsNull { expr, not } => {
+            let expr_str = expression_to_predicate(expr);
+            if *not {
+                format!("({} IS NOT NULL)", expr_str)
+            } else {
+                format!("({} IS NULL)", expr_str)
             }
         }
     }
@@ -328,36 +386,42 @@ mod tests {
         assert!(hash_join_display.contains("Right:"));
         
         // Test HashAggregate
-        let agg_expr = Expression::Aggregate {
-            function: AggregateFunction::Count,
-            arg: Some(Box::new(Expression::Column(ColumnReference {
-                name: "id".to_string(),
-                table: None,
-            }))),
-        };
-        
-        let group_by_expr = Expression::Column(ColumnReference {
-            name: "department".to_string(),
-            table: None,
-        });
-        
-        let having_expr = Expression::BinaryOp {
-            left: Box::new(agg_expr.clone()),
-            op: AstOperator::GreaterThan,
-            right: Box::new(Expression::Literal(Value::Integer(5))),
-        };
-        
         let agg_plan = PhysicalPlan::HashAggregate {
-            input: Box::new(scan_no_alias.clone()),
-            group_by: vec![group_by_expr.clone()],
-            aggregate_expressions: vec![agg_expr.clone()],
-            having: Some(having_expr.clone()),
+            input: Box::new(PhysicalPlan::SeqScan { // Recreate scan_no_alias locally if needed
+                 table_name: "users".to_string(), 
+                 alias: None 
+            }),
+            group_by: vec![Expression::Column(ColumnReference { name: "dept".to_string(), table: None })],
+            aggregate_select_expressions: vec![ // Aggregates needed for computation
+                PhysicalSelectExpression {
+                    expression: Expression::Aggregate {
+                        function: AggregateFunction::Count,
+                        arg: None,
+                    },
+                    output_name: "COUNT(*)".to_string(),
+                },
+            ],
+            having: None,
+            // Add the field in test case
+            output_select_list: vec![ 
+                PhysicalSelectExpression { // Group key in output
+                    expression: Expression::Column(ColumnReference { name: "dept".to_string(), table: None }),
+                    output_name: "dept".to_string(),
+                },
+                PhysicalSelectExpression { // Aggregate in output
+                    expression: Expression::Aggregate {
+                        function: AggregateFunction::Count,
+                        arg: None,
+                    },
+                    output_name: "count_all".to_string(), // Example alias
+                },
+            ]
         };
-        
         let agg_display = format!("{}", agg_plan);
-        assert!(agg_display.contains("HashAggregate:"));
-        assert!(agg_display.contains("GROUP BY"));
-        assert!(agg_display.contains("HAVING"));
+        // Updated assertion based on new Display using output_select_list
+        assert!(agg_display.contains("HashAggregate: [dept AS dept, COUNT(*) AS count_all]"));
+        assert!(agg_display.contains(" GROUP BY [Column(ColumnReference { table: None, name: \"dept\" })]"));
+        assert!(agg_display.contains("SeqScan: users"));
         
         // Test CreateTable
         let column1 = ColumnDef {

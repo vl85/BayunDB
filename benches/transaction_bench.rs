@@ -6,6 +6,7 @@ use tempfile::NamedTempFile;
 
 use bayundb::common::types::{PageId, Rid};
 use bayundb::storage::buffer::BufferPoolManager;
+use bayundb::storage::page::PageManager;
 use bayundb::transaction::{TransactionManager, IsolationLevel};
 use bayundb::transaction::wal::log_manager::{LogManager, LogManagerConfig};
 use bayundb::transaction::wal::log_buffer::LogBufferConfig;
@@ -60,8 +61,7 @@ fn insert_test_record(buffer_pool: &Arc<BufferPoolManager>, txn_id: u32, txn_man
     let record_data = b"Benchmark test record";
     
     // Get the page manager and insert a record
-    let disk_manager = buffer_pool.disk_manager();
-    let page_manager = disk_manager.page_manager();
+    let page_manager = PageManager::new();
     
     let rid = page_manager.insert_record(&mut page_guard, record_data).unwrap();
     

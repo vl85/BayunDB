@@ -11,6 +11,12 @@ pub struct PageHeader {
     pub prev_page_id: Option<PageId>,
 }
 
+impl Default for PageHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PageHeader {
     pub fn new() -> Self {
         Self {

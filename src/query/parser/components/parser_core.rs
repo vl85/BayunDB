@@ -4,18 +4,38 @@
 
 use std::iter::Peekable;
 use std::vec::IntoIter;
+use std::fmt;
 
 use crate::query::parser::ast::*;
 use crate::query::parser::lexer::{Lexer, Token, TokenType};
 
 /// SQL Parsing errors
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseError {
     UnexpectedToken(Token),
     ExpectedToken(TokenType, Token),
-    InvalidSyntax(String),
+    InvalidOperator(String),
+    InvalidLiteral(String),
     EndOfInput,
+    NotYetImplemented(String),
+    InvalidSyntax(String),
 }
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::UnexpectedToken(token) => write!(f, "Unexpected token: {:?}", token),
+            ParseError::ExpectedToken(expected, actual) => write!(f, "Expected token: {:?}, found: {:?}", expected, actual),
+            ParseError::InvalidOperator(op) => write!(f, "Invalid operator: {}", op),
+            ParseError::InvalidLiteral(lit) => write!(f, "Invalid literal: {}", lit),
+            ParseError::EndOfInput => write!(f, "Unexpected end of input"),
+            ParseError::NotYetImplemented(feature) => write!(f, "Not yet implemented: {}", feature),
+            ParseError::InvalidSyntax(reason) => write!(f, "Invalid syntax: {}", reason),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 /// Result type for parsing operations
 pub type ParseResult<T> = Result<T, ParseError>;
@@ -24,6 +44,8 @@ pub type ParseResult<T> = Result<T, ParseError>;
 pub struct Parser {
     pub tokens: Peekable<IntoIter<Token>>,
     pub current_token: Option<Token>,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
 }
 
 impl Parser {
@@ -44,6 +66,8 @@ impl Parser {
         let mut parser = Parser {
             tokens: tokens.into_iter().peekable(),
             current_token: None,
+            line: None,
+            column: None,
         };
         
         parser.next_token();
@@ -56,6 +80,8 @@ impl Parser {
         let mut parser = Parser {
             tokens: tokens.into_iter().peekable(),
             current_token: None,
+            line: None,
+            column: None,
         };
         
         parser.next_token();
@@ -109,14 +135,49 @@ impl Parser {
             None => Err(ParseError::EndOfInput),
         }
     }
+
+    /// Get the literal string of the current token, or an error if no token or no literal.
+    pub fn current_token_literal_or_err(&self) -> ParseResult<String> {
+        self.current_token.as_ref().map(|t| t.literal.clone())
+            .ok_or_else(|| ParseError::UnexpectedToken(
+                self.current_token.clone().unwrap_or_else(|| Token {
+                    token_type: TokenType::ILLEGAL, // Dummy token for error
+                    literal: "<no token>".to_string(),
+                    line: self.line.unwrap_or(0), // Assuming Parser has line/col info
+                    column: self.column.unwrap_or(0),
+                })
+            ))
+    }
+
+    /// Get current token type, if any
+    pub fn current_token_type(&self) -> Option<TokenType> {
+        self.current_token.as_ref().map(|t| t.token_type.clone())
+    }
+
+    /// Peek at the next token's type without consuming current
+    pub fn peek_token_type(&mut self) -> Option<TokenType> {
+        self.tokens.peek().map(|t| t.token_type.clone())
+    }
+
+    /// Check if the next token is of a specific type
+    pub fn peek_token_is(&mut self, expected_type: TokenType) -> bool {
+        self.tokens.peek().is_some_and(|t| matches_token_type(&t.token_type, &expected_type))
+    }
 }
 
 /// Helper function to check if a token type matches the expected type
 pub fn matches_token_type(token_type: &TokenType, expected: &TokenType) -> bool {
     match (token_type, expected) {
-        // Handle IDENTIFIER separately since it contains a value
-        (TokenType::IDENTIFIER(_), TokenType::IDENTIFIER(_)) => true,
-        // For other token types, just check if they're the same variant
+        // Handle IDENTIFIER separately
+        (TokenType::IDENTIFIER(actual_val), TokenType::IDENTIFIER(expected_val)) => {
+            if expected_val.is_empty() { // If expected is generic IDENTIFIER (e.g. TokenType::IDENTIFIER(String::new()))
+                true
+            } else { // If expected is specific IDENTIFIER (e.g. TokenType::IDENTIFIER("KEY".to_string()))
+                actual_val.eq_ignore_ascii_case(expected_val) // Case-insensitive for keywords
+            }
+        }
+        // For other token types, just check if they're the same variant (discriminant)
+        // This is safe because other variants either don't have data or their data isn't used for this kind of matching.
         _ => std::mem::discriminant(token_type) == std::mem::discriminant(expected),
     }
 }
@@ -124,18 +185,21 @@ pub fn matches_token_type(token_type: &TokenType, expected: &TokenType) -> bool 
 /// Convert a token type to an operator
 pub fn token_to_operator(token_type: &TokenType) -> ParseResult<Operator> {
     match token_type {
-        TokenType::EQUALS => Ok(Operator::Equals),
-        TokenType::NotEqual => Ok(Operator::NotEquals),
-        TokenType::LessThan => Ok(Operator::LessThan),
-        TokenType::GreaterThan => Ok(Operator::GreaterThan),
-        TokenType::LessEqual => Ok(Operator::LessEquals),
-        TokenType::GreaterEqual => Ok(Operator::GreaterEquals),
-        // Add other operators as needed
+        TokenType::EQ | TokenType::ASSIGN => Ok(Operator::Equals),
+        TokenType::NotEq => Ok(Operator::NotEquals),
+        TokenType::LT => Ok(Operator::LessThan),
+        TokenType::GT => Ok(Operator::GreaterThan),
+        TokenType::LtEq => Ok(Operator::LessEquals),
+        TokenType::GtEq => Ok(Operator::GreaterEquals),
         TokenType::PLUS => Ok(Operator::Plus),
         TokenType::MINUS => Ok(Operator::Minus),
-        TokenType::MULTIPLY => Ok(Operator::Multiply),
-        TokenType::DIVIDE => Ok(Operator::Divide),
-        TokenType::MODULO => Ok(Operator::Modulo),
+        TokenType::ASTERISK => Ok(Operator::Multiply),
+        TokenType::SLASH => Ok(Operator::Divide),
+        TokenType::PERCENT => Ok(Operator::Modulo),
+        // Add other operators like AND, OR if they are token types
+        // TokenType::AND => Ok(Operator::And),
+        // TokenType::OR => Ok(Operator::Or),
+        // TokenType::BANG / TokenType::NOT (if lexer has specific NOT token for operator) => Ok(Operator::Not)
         _ => Err(ParseError::InvalidSyntax(format!("Not an operator: {:?}", token_type))),
     }
 }
@@ -143,11 +207,11 @@ pub fn token_to_operator(token_type: &TokenType) -> ParseResult<Operator> {
 /// Get operator precedence for expression parsing
 pub fn get_operator_precedence(token_type: &TokenType) -> u8 {
     match token_type {
-        TokenType::EQUALS | TokenType::NotEqual => 1, 
-        TokenType::LessThan | TokenType::GreaterThan | 
-        TokenType::LessEqual | TokenType::GreaterEqual => 1,
+        TokenType::EQ | TokenType::ASSIGN | TokenType::NotEq | TokenType::LT | TokenType::GT | TokenType::LtEq | TokenType::GtEq => 1,
         TokenType::PLUS | TokenType::MINUS => 2,
-        TokenType::MULTIPLY | TokenType::DIVIDE | TokenType::MODULO => 3,
+        TokenType::ASTERISK | TokenType::SLASH | TokenType::PERCENT => 3,
+        // TokenType::AND => 4, // Example for logical operators
+        // TokenType::OR => 5,
         _ => 0,
     }
 }
@@ -162,7 +226,7 @@ mod tests {
         assert!(parser.current_token_is(TokenType::SELECT));
         
         parser.next_token(); // Move to *
-        assert!(parser.current_token_is(TokenType::MULTIPLY));
+        assert!(parser.current_token_is(TokenType::ASTERISK));
         
         parser.next_token(); // Move to FROM
         assert!(parser.current_token_is(TokenType::FROM));
@@ -176,8 +240,8 @@ mod tests {
         let token = parser.expect_token(TokenType::SELECT);
         assert!(token.is_ok());
         
-        // Expect * (MULTIPLY)
-        let token = parser.expect_token(TokenType::MULTIPLY);
+        // Expect * (ASTERISK)
+        let token = parser.expect_token(TokenType::ASTERISK);
         assert!(token.is_ok());
         
         // Expect FROM
@@ -211,23 +275,23 @@ mod tests {
         assert!(matches_token_type(&TokenType::SELECT, &TokenType::SELECT));
         assert!(!matches_token_type(&TokenType::SELECT, &TokenType::FROM));
         assert!(matches_token_type(&TokenType::IDENTIFIER("abc".to_string()), &TokenType::IDENTIFIER(String::new())));
-        assert!(matches_token_type(&TokenType::INTEGER(123), &TokenType::INTEGER(0))); // Compares discriminant
-        assert!(!matches_token_type(&TokenType::INTEGER(123), &TokenType::FLOAT(0.0)));
+        assert!(matches_token_type(&TokenType::INTEGER, &TokenType::INTEGER));
+        assert!(!matches_token_type(&TokenType::INTEGER, &TokenType::FLOAT));
     }
 
     #[test]
     fn test_token_to_operator_helper() {
-        assert_eq!(token_to_operator(&TokenType::EQUALS).unwrap(), Operator::Equals);
-        assert_eq!(token_to_operator(&TokenType::NotEqual).unwrap(), Operator::NotEquals);
-        assert_eq!(token_to_operator(&TokenType::LessThan).unwrap(), Operator::LessThan);
-        assert_eq!(token_to_operator(&TokenType::GreaterThan).unwrap(), Operator::GreaterThan);
-        assert_eq!(token_to_operator(&TokenType::LessEqual).unwrap(), Operator::LessEquals);
-        assert_eq!(token_to_operator(&TokenType::GreaterEqual).unwrap(), Operator::GreaterEquals);
+        assert_eq!(token_to_operator(&TokenType::EQ).unwrap(), Operator::Equals);
+        assert_eq!(token_to_operator(&TokenType::NotEq).unwrap(), Operator::NotEquals);
+        assert_eq!(token_to_operator(&TokenType::LT).unwrap(), Operator::LessThan);
+        assert_eq!(token_to_operator(&TokenType::GT).unwrap(), Operator::GreaterThan);
+        assert_eq!(token_to_operator(&TokenType::LtEq).unwrap(), Operator::LessEquals);
+        assert_eq!(token_to_operator(&TokenType::GtEq).unwrap(), Operator::GreaterEquals);
         assert_eq!(token_to_operator(&TokenType::PLUS).unwrap(), Operator::Plus);
         assert_eq!(token_to_operator(&TokenType::MINUS).unwrap(), Operator::Minus);
-        assert_eq!(token_to_operator(&TokenType::MULTIPLY).unwrap(), Operator::Multiply);
-        assert_eq!(token_to_operator(&TokenType::DIVIDE).unwrap(), Operator::Divide);
-        assert_eq!(token_to_operator(&TokenType::MODULO).unwrap(), Operator::Modulo);
+        assert_eq!(token_to_operator(&TokenType::ASTERISK).unwrap(), Operator::Multiply);
+        assert_eq!(token_to_operator(&TokenType::SLASH).unwrap(), Operator::Divide);
+        assert_eq!(token_to_operator(&TokenType::PERCENT).unwrap(), Operator::Modulo);
         
         assert!(token_to_operator(&TokenType::SELECT).is_err());
         assert!(token_to_operator(&TokenType::IDENTIFIER("id".to_string())).is_err());
@@ -235,10 +299,10 @@ mod tests {
 
     #[test]
     fn test_get_operator_precedence_helper() {
-        assert_eq!(get_operator_precedence(&TokenType::EQUALS), 1);
+        assert_eq!(get_operator_precedence(&TokenType::EQ), 1);
         assert_eq!(get_operator_precedence(&TokenType::PLUS), 2);
-        assert_eq!(get_operator_precedence(&TokenType::MULTIPLY), 3);
-        assert_eq!(get_operator_precedence(&TokenType::SELECT), 0); // Not an operator for expressions
-        assert_eq!(get_operator_precedence(&TokenType::LeftParen), 0); // Not an infix operator
+        assert_eq!(get_operator_precedence(&TokenType::ASTERISK), 3);
+        assert_eq!(get_operator_precedence(&TokenType::SELECT), 0);
+        assert_eq!(get_operator_precedence(&TokenType::LPAREN), 0);
     }
 } 

@@ -71,6 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         joins: vec![],
         group_by: None,
         having: None,
+        order_by: Vec::new(),
     });
     println!("SELECT statement created");
     

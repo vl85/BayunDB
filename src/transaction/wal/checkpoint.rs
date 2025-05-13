@@ -106,7 +106,7 @@ mod tests {
     fn test_checkpoint_config_default() {
         let config = CheckpointConfig::default();
         assert_eq!(config.checkpoint_interval, 300);
-        assert_eq!(config.fuzzy_checkpoint, true);
+        assert!(config.fuzzy_checkpoint);
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
         let config = CheckpointConfig { checkpoint_interval: 60, fuzzy_checkpoint: false };
         let cm = CheckpointManager::new(log_manager.clone(), config.clone());
         assert_eq!(cm.config.checkpoint_interval, 60);
-        assert_eq!(cm.config.fuzzy_checkpoint, false);
+        assert!(!cm.config.fuzzy_checkpoint);
         // last_checkpoint_time is set to now(), difficult to assert exact value
 
         let cm_default = CheckpointManager::default(log_manager);

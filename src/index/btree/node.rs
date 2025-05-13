@@ -199,7 +199,7 @@ impl<K: Clone + Ord> BTreeNode<K> {
     
     /// Check if the node has fewer keys than the minimum required
     pub fn is_underflow(&self, order: usize) -> bool {
-        self.keys.len() < (order + 1) / 2
+        self.keys.len() < order.div_ceil(2)
     }
     
     /// Count the number of key-value pairs in leaf nodes

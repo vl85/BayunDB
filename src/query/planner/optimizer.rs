@@ -12,6 +12,12 @@ pub struct Optimizer {
     // To be implemented later
 }
 
+impl Default for Optimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Optimizer {
     /// Create a new optimizer instance
     pub fn new() -> Self {

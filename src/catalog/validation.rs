@@ -87,7 +87,7 @@ impl TypeValidator {
     pub fn validate_row(values: &[(&String, &DataValue)], table: &Table) -> ValidationResult<()> {
         for (col_name, value) in values {
             if let Some(column) = table.get_column(col_name) {
-                Self::validate_value(value, &column)?;
+                Self::validate_value(value, column)?;
             } else {
                 return Err(ValidationError::ColumnNotFound(col_name.to_string()));
             }
@@ -308,6 +308,57 @@ impl TypeValidator {
                         }
                     }
                 }
+            }
+            Expression::Case { when_then_clauses, else_clause, .. } => {
+                // Determine the result type of the CASE expression.
+                // SQL typically requires all result expressions (THEN, ELSE) to be compatible.
+                // For simplicity, we'll take the type of the first THEN expression.
+                // A more robust implementation would check all types for compatibility and determine a supertype.
+                if let Some((_, first_then_expr)) = when_then_clauses.first() {
+                    Self::get_expression_type(first_then_expr, table)
+                } else if let Some(else_expr) = else_clause {
+                    Self::get_expression_type(else_expr, table)
+                } else {
+                    // CASE without WHEN...THEN and without ELSE is not valid SQL, 
+                    // but parser ensures at least one WHEN...THEN.
+                    // If somehow an empty when_then_clauses and no else_clause occurs, 
+                    // this is an issue. Defaulting to a generic error or a specific type like Text/Null.
+                    // However, the parser for Expression::Case ensures at least one WHEN clause.
+                    // If all results are NULL, the type might be considered NULL or a default type.
+                    // For now, this path should ideally not be hit if parser guarantees WHEN clauses.
+                    // If it is hit, it implies an issue or a CASE expression that only yields NULL.
+                    // Let's assume if we get here, it resolves to Text as a fallback, or an error.
+                    // For a robust system, this needs careful consideration of SQL type precedence rules for CASE.
+                    // Given the current test case (CASE WHEN ... THEN 0 ELSE 1 END), result is Integer.
+                    // If first THEN is NULL, try next, then ELSE. If all are NULL, what type is it?
+                    // For now, let's try to find the first non-NULL type.
+                    let mut resolved_type: Option<DataType> = None;
+                    for (_, then_expr) in when_then_clauses {
+                        match Self::get_expression_type(then_expr, table) {
+                            Ok(dt) => {
+                                resolved_type = Some(dt);
+                                break;
+                            }
+                            Err(_) => {} // Ignore errors here, try next clause
+                        }
+                    }
+                    if resolved_type.is_none() {
+                        if let Some(el_expr) = else_clause {
+                             match Self::get_expression_type(el_expr, table) {
+                                Ok(dt) => resolved_type = Some(dt),
+                                Err(_) => {} // Ignore
+                            }
+                        }
+                    }
+                    resolved_type.ok_or_else(|| ValidationError::TypeMismatch {
+                        expected: "a determinable type from THEN/ELSE clauses".to_string(),
+                        actual: "all THEN/ELSE clauses failed to resolve type or were NULL".to_string(),
+                    })
+                }
+            }
+            Expression::IsNull { .. } => {
+                // IS NULL and IS NOT NULL expressions always evaluate to a boolean.
+                Ok(DataType::Boolean)
             }
         }
     }
