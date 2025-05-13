@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use super::column::Column;
 use serde::{Serialize, Deserialize};
+use super::table_column_ops;
 
 /// Represents a database table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,11 +15,11 @@ pub struct Table {
     /// Table name
     name: String,
     /// Columns in the table
-    columns: Vec<Column>,
+    pub(crate) columns: Vec<Column>,
     /// Column name to index lookup
-    column_map: HashMap<String, usize>,
+    pub(crate) column_map: HashMap<String, usize>,
     /// Primary key column indices
-    primary_key_columns: Vec<usize>,
+    pub(crate) primary_key_columns: Vec<usize>,
     /// First page ID for this table's data
     first_page_id: Option<u32>,
 }
@@ -101,18 +102,7 @@ impl Table {
     
     /// Add a column to the table
     pub(crate) fn add_column(&mut self, column: Column) -> Result<(), String> {
-        let col_name = column.name().to_string();
-        if self.has_column(&col_name) {
-            return Err(format!("Column {} already exists in table {}", col_name, self.name));
-        }
-        let idx = self.columns.len();
-        self.columns.push(column);
-        self.column_map.insert(col_name, idx);
-        if self.columns[idx].is_primary_key() {
-            self.primary_key_columns.push(idx);
-        }
-        // TODO: Data migration - update all existing rows to have the default value for this column if present
-        Ok(())
+        table_column_ops::add_column(self, column)
     }
     
     /// Get the row size in bytes
@@ -146,51 +136,16 @@ impl Table {
     
     /// Drop a column from the table
     pub(crate) fn drop_column(&mut self, column_name: &str) -> Result<(), String> {
-        if !self.has_column(column_name) {
-            return Err(format!("Column {} does not exist in table {}", column_name, self.name));
-        }
-        let idx = self.column_map[column_name];
-        self.columns.remove(idx);
-        self.column_map.remove(column_name);
-        // Rebuild column_map and primary_key_columns
-        self.column_map.clear();
-        self.primary_key_columns.clear();
-        for (i, col) in self.columns.iter().enumerate() {
-            self.column_map.insert(col.name().to_string(), i);
-            if col.is_primary_key() {
-                self.primary_key_columns.push(i);
-            }
-        }
-        Ok(())
+        table_column_ops::drop_column(self, column_name)
     }
 
     /// Rename a column in the table
     pub(crate) fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
-        if !self.has_column(old_name) {
-            return Err(format!("Column {} does not exist in table {}", old_name, self.name));
-        }
-        if self.has_column(new_name) {
-            return Err(format!("Column {} already exists in table {}", new_name, self.name));
-        }
-        let idx = self.column_map[old_name];
-        self.columns[idx].rename(new_name);
-        self.column_map.remove(old_name);
-        self.column_map.insert(new_name.to_string(), idx);
-        Ok(())
+        table_column_ops::rename_column(self, old_name, new_name)
     }
 
     /// Alter the data type of a column
     pub(crate) fn alter_column_type(&mut self, column_name: &str, new_type: super::schema::DataType) -> Result<(), String> {
-        if let Some(&idx) = self.column_map.get(column_name) {
-            if let Some(col) = self.columns.get_mut(idx) {
-                col.set_data_type(new_type);
-                Ok(())
-            } else {
-                // This case should theoretically not happen if column_map is consistent with columns vec
-                Err(format!("Internal catalog error: Column index {} for '{}' out of bounds.", idx, column_name))
-            }
-        } else {
-            Err(format!("Column '{}' not found in table '{}' for ALTER COLUMN TYPE.", column_name, self.name))
-        }
+        table_column_ops::alter_column_type(self, column_name, new_type)
     }
 } 

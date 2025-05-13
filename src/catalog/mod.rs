@@ -14,6 +14,7 @@ pub mod convert;
 pub mod catalog;
 pub mod alter_table;
 pub mod schema_management;
+pub mod table_column_ops;
 
 // Re-export key types
 pub use self::schema::Schema;
