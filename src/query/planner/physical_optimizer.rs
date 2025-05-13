@@ -8,8 +8,12 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use crate::catalog::Catalog;
 
+use crate::query::planner::filter_pushdown::FilterPushdownOptimizer;
+use crate::query::planner::materialization::MaterializationOptimizer;
+use crate::query::planner::join_reordering::JoinReorderingOptimizer;
+
 /// Extracts all unique column identifiers (table.column or column) from an expression.
-fn extract_column_identifiers(expr: &Expression) -> HashSet<String> {
+pub fn extract_column_identifiers(expr: &Expression) -> HashSet<String> {
     let mut identifiers = HashSet::new();
     match expr {
         Expression::Column(col_ref) => {
@@ -58,7 +62,7 @@ fn extract_column_identifiers(expr: &Expression) -> HashSet<String> {
 
 /// Splits a predicate into a list of conjoined expressions.
 /// e.g., A AND B AND C becomes [A, B, C]
-fn split_conjunction_recursive(predicate: &Expression, conditions: &mut Vec<Expression>) {
+pub fn split_conjunction_recursive(predicate: &Expression, conditions: &mut Vec<Expression>) {
     match predicate {
         Expression::BinaryOp { left, op: AstOperator::And, right } => {
             split_conjunction_recursive(left, conditions);
@@ -70,7 +74,7 @@ fn split_conjunction_recursive(predicate: &Expression, conditions: &mut Vec<Expr
     }
 }
 
-fn build_expression_from_conjunctions(mut conditions: Vec<Expression>) -> Option<Expression> {
+pub fn build_expression_from_conjunctions(mut conditions: Vec<Expression>) -> Option<Expression> {
     if conditions.is_empty() {
         None
     } else {
@@ -89,11 +93,16 @@ fn build_expression_from_conjunctions(mut conditions: Vec<Expression>) -> Option
 /// Physical optimizer for query plan optimization
 pub struct PhysicalOptimizer {
     catalog: Arc<RwLock<Catalog>>,
+    filter_pushdown: FilterPushdownOptimizer,
+    materialization: MaterializationOptimizer,
+    join_reordering: JoinReorderingOptimizer,
 }
 
 impl PhysicalOptimizer {
     /// Create a new physical optimizer
     pub fn new(catalog: Arc<RwLock<Catalog>>) -> Self {
+        let filter_pushdown = FilterPushdownOptimizer::new(catalog.clone());
+        let materialization = MaterializationOptimizer::new(catalog.clone());
         PhysicalOptimizer { catalog }
     }
     

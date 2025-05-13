@@ -4,12 +4,17 @@
 // It implements the iterator-based execution model for query processing.
 
 // Re-export public components
-pub mod engine;
-pub mod result;
-pub mod operators;
 pub mod expression_eval;
+pub mod operators;
+pub mod result;
 
-// Export key types
-pub use self::engine::ExecutionEngine;
+// Engine components
+pub mod engine;
+pub mod dml_executor;
+pub mod ddl_executor;
+pub mod type_conversion;
+
+// Re-export key types
+pub use engine::ExecutionEngine;
 pub use self::result::QueryResult;
-pub use self::operators::Operator; 
+pub use operators::Operator; 
