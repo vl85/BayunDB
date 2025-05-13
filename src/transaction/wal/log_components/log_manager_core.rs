@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use crate::transaction::wal::log_buffer::{LogBuffer, LogBufferConfig, LogBufferError};
 use crate::transaction::wal::log_record::{LogRecord, LogRecordType, LogRecordContent};
-use crate::transaction::wal::log_components::log_file_manager::{LogFileManager, LogFileError};
+use crate::transaction::wal::log_components::log_file_manager::LogFileManager;
+use crate::transaction::wal::log_components::log_file_error::LogFileError;
 use crate::transaction::wal::log_components::log_iterator::LogManagerIteratorExt;
 
 /// Error type for log manager operations

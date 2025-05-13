@@ -13,6 +13,7 @@ pub mod expression;
 pub mod convert;
 pub mod catalog;
 pub mod alter_table;
+pub mod schema_management;
 
 // Re-export key types
 pub use self::schema::Schema;

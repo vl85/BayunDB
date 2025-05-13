@@ -9,103 +9,9 @@ use std::sync::{Arc, Mutex};
 use log::error;
 use thiserror::Error;
 use crate::transaction::wal::log_components::log_manager_core::LogManagerConfig;
-
-/// Error type for log file operations
-#[derive(Error, Debug)]
-pub enum LogFileError {
-    #[error("I/O error: {0}")]
-    IoError(#[from] io::Error),
-    
-    #[error("Invalid file header")]
-    InvalidHeader,
-    
-    #[error("Invalid file state: {0}")]
-    InvalidState(String),
-    
-    #[error("No log files found")]
-    NoLogFiles,
-}
-
-/// Result type for log file operations
-pub type Result<T> = std::result::Result<T, LogFileError>;
-
-/// Log file header structure
-#[derive(Debug, Clone)]
-pub struct LogFileHeader {
-    /// Magic number to identify log files
-    pub magic: u32,
-    /// Version of the log file format
-    pub version: u32,
-    /// Size of the header in bytes
-    pub header_size: u32,
-    /// LSN of the first record in the file
-    pub first_lsn: u64,
-}
-
-impl LogFileHeader {
-    /// Magic number for log files: "WALD" in ASCII
-    pub const MAGIC: u32 = 0x57414C44;
-    
-    /// Current log file format version
-    pub const VERSION: u32 = 1;
-    
-    /// Size of the header in bytes
-    pub const HEADER_SIZE: u32 = 16;
-    
-    /// Create a new log file header
-    pub fn new(first_lsn: u64) -> Self {
-        Self {
-            magic: Self::MAGIC,
-            version: Self::VERSION,
-            header_size: Self::HEADER_SIZE,
-            first_lsn,
-        }
-    }
-    
-    /// Write the header to a file
-    pub fn write_to(&self, file: &mut File) -> io::Result<()> {
-        file.seek(SeekFrom::Start(0))?;
-        file.write_all(&self.magic.to_le_bytes())?;
-        file.write_all(&self.version.to_le_bytes())?;
-        file.write_all(&self.header_size.to_le_bytes())?;
-        file.write_all(&self.first_lsn.to_le_bytes())?;
-        file.flush()?;
-        Ok(())
-    }
-    
-    /// Read the header from a file
-    pub fn read_from(file: &mut File) -> io::Result<Self> {
-        file.seek(SeekFrom::Start(0))?;
-        
-        let mut magic_bytes = [0; 4];
-        file.read_exact(&mut magic_bytes)?;
-        let magic = u32::from_le_bytes(magic_bytes);
-        
-        let mut version_bytes = [0; 4];
-        file.read_exact(&mut version_bytes)?;
-        let version = u32::from_le_bytes(version_bytes);
-        
-        let mut header_size_bytes = [0; 4];
-        file.read_exact(&mut header_size_bytes)?;
-        let header_size = u32::from_le_bytes(header_size_bytes);
-        
-        let mut first_lsn_bytes = [0; 8];
-        file.read_exact(&mut first_lsn_bytes)?;
-        let first_lsn = u64::from_le_bytes(first_lsn_bytes);
-        
-        Ok(Self {
-            magic,
-            version,
-            header_size,
-            first_lsn,
-        })
-    }
-    
-    /// Validate the header
-    pub fn validate(&self) -> bool {
-        self.magic == Self::MAGIC && self.version == Self::VERSION
-    }
-}
+use super::log_file_header::LogFileHeader;
+use super::log_file_error::{LogFileError, Result};
+use super::log_file_utils::{find_log_files, extract_sequence_from_path};
 
 /// Manager for log file operations
 #[derive(Clone)]
@@ -130,7 +36,7 @@ impl LogFileManager {
         std::fs::create_dir_all(&config.log_dir)?;
         
         // Find existing log files
-        let log_files = Self::find_log_files(config)?;
+        let log_files = find_log_files(config)?;
         
         // Initialize the log file
         let (file, path, file_position, current_lsn) = if log_files.is_empty() {
@@ -195,57 +101,6 @@ impl LogFileManager {
     /// Generate a log file path based on sequence number
     fn generate_log_file_path(config: &LogManagerConfig, sequence: u32) -> PathBuf {
         config.log_dir.join(format!("{}_{:06}.log", config.log_file_base_name, sequence))
-    }
-    
-    /// Find existing log files in the log directory
-    pub fn find_log_files(config: &LogManagerConfig) -> Result<Vec<(u32, PathBuf)>> {
-        let mut log_files = Vec::new();
-        
-        // Create the log directory if it doesn't exist
-        if !config.log_dir.exists() {
-            std::fs::create_dir_all(&config.log_dir)?;
-            return Ok(log_files);
-        }
-        
-        // Read directory entries
-        for entry in std::fs::read_dir(&config.log_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            
-            // Skip non-files
-            if !path.is_file() {
-                continue;
-            }
-            
-            // Try to extract the sequence number from the file name
-            if let Ok(sequence) = Self::extract_sequence_from_path(config, &path) {
-                log_files.push((sequence, path));
-            }
-        }
-        
-        Ok(log_files)
-    }
-    
-    /// Extract sequence number from a log file path
-    pub fn extract_sequence_from_path(config: &LogManagerConfig, path: &Path) -> Result<u32> {
-        // Get the file name
-        let file_name = path.file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| LogFileError::InvalidState("Invalid file name".to_string()))?;
-        
-        // Check if the file name matches the expected pattern
-        let prefix = format!("{}_", config.log_file_base_name);
-        
-        if !file_name.starts_with(&prefix) || !file_name.ends_with(".log") {
-            return Err(LogFileError::InvalidState("Invalid log file name".to_string()));
-        }
-        
-        // Extract the sequence number
-        let sequence_str = &file_name[prefix.len()..file_name.len() - 4];
-        let sequence = sequence_str.parse::<u32>()
-            .map_err(|_| LogFileError::InvalidState(format!("Invalid sequence number: {}", sequence_str)))?;
-        
-        Ok(sequence)
     }
     
     /// Find the maximum LSN in a log file
@@ -349,7 +204,7 @@ impl LogFileManager {
         let current_path = self.current_path.lock().unwrap();
         
         // Extract the current sequence number
-        let current_sequence = Self::extract_sequence_from_path(&self.config, &current_path)
+        let current_sequence = extract_sequence_from_path(&self.config, &current_path)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         
         // Create a new log file with the next sequence number
@@ -399,7 +254,7 @@ impl LogFileManager {
         let config = &self.get_config();
         
         // Find all log files
-        let log_files = Self::find_log_files(config)?;
+        let log_files = find_log_files(config)?;
         
         if log_files.is_empty() {
             return Ok(None);

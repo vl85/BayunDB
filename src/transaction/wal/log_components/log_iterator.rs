@@ -9,7 +9,10 @@ use std::sync::Arc;
 
 use crate::transaction::wal::log_components::log_manager_core::{LogManager, LogManagerError, Result};
 use crate::transaction::wal::log_record::LogRecord;
-use crate::transaction::wal::log_components::log_file_manager::{LogFileManager, LogFileHeader};
+use crate::transaction::wal::log_components::log_file_manager::LogFileManager;
+use crate::transaction::wal::log_components::log_file_header::LogFileHeader;
+use crate::transaction::wal::log_components::log_file_utils::{find_log_files, extract_sequence_from_path};
+use crate::transaction::wal::log_components::log_file_error::LogFileError;
 
 /// Iterator for traversing log records
 pub struct LogRecordIterator {
@@ -54,8 +57,7 @@ impl LogRecordIterator {
         let config = &file_manager.get_config();
         
         // Find all log files
-        let log_files = LogFileManager::find_log_files(config)
-            .map_err(LogManagerError::FileError)?;
+        let log_files = find_log_files(config)?;
         
         if log_files.is_empty() {
             return Ok(false);
@@ -70,17 +72,15 @@ impl LogRecordIterator {
             // Open the file
             let mut file = OpenOptions::new()
                 .read(true)
-                .open(&path)
-                .map_err(LogManagerError::IoError)?;
+                .open(&path)?;
             
             // Read the header to get the first LSN
-            let header = crate::transaction::wal::log_components::log_file_manager::LogFileHeader::read_from(&mut file)
-                .map_err(LogManagerError::IoError)?;
+            let header = LogFileHeader::read_from(&mut file)?;
             
             // Validate the header
             if !header.validate() {
                 return Err(LogManagerError::FileError(
-                    crate::transaction::wal::log_components::log_file_manager::LogFileError::InvalidHeader
+                    LogFileError::InvalidHeader
                 ));
             }
             
@@ -89,8 +89,7 @@ impl LogRecordIterator {
                 // Check if there are more files in the sequence
                 if let Some((next_seq, _)) = log_files.iter().find(|(seq, _)| *seq > sequence) {
                     // Find the max LSN in this file
-                    let file_size = file.metadata()
-                        .map_err(LogManagerError::IoError)?
+                    let file_size = file.metadata()?
                         .len();
                     
                     // If this is not just a header (means there are records in the file)
@@ -98,12 +97,10 @@ impl LogRecordIterator {
                         // Get another file instance to avoid moving the current one
                         let mut temp_file = OpenOptions::new()
                             .read(true)
-                            .open(&path)
-                            .map_err(LogManagerError::IoError)?;
+                            .open(&path)?;
                         
                         // Find the max LSN in this file
-                        let max_lsn = LogFileManager::find_max_lsn(&mut temp_file, header.header_size as u64)
-                            .map_err(LogManagerError::FileError)?;
+                        let max_lsn = LogFileManager::find_max_lsn(&mut temp_file, header.header_size as u64)?;
                         
                         // If the LSN we're looking for is in this file's range
                         if lsn <= max_lsn {
@@ -142,21 +139,17 @@ impl LogRecordIterator {
         let file = self.current_file.as_mut().unwrap();
         
         // Get the header to determine header size
-        file.seek(SeekFrom::Start(0))
-            .map_err(LogManagerError::IoError)?;
+        file.seek(SeekFrom::Start(0))?;
         
-        let header = LogFileHeader::read_from(file)
-            .map_err(LogManagerError::IoError)?;
+        let header = LogFileHeader::read_from(file)?;
         
         // Start from the beginning of the file (after the header)
-        file.seek(SeekFrom::Start(header.header_size as u64))
-            .map_err(LogManagerError::IoError)?;
+        file.seek(SeekFrom::Start(header.header_size as u64))?;
         
         self.current_position = header.header_size as u64;
         
         // Check file size to see if there are any records
-        let file_size = file.metadata()
-            .map_err(LogManagerError::IoError)?
+        let file_size = file.metadata()?
             .len();
         
         // If the file only contains the header, there are no records to seek
@@ -197,8 +190,7 @@ impl LogRecordIterator {
                                     Ok(record) => {
                                         if record.lsn >= target_lsn {
                                             // Found target LSN, rewind to start of this record
-                                            file.seek(SeekFrom::Start(prev_position))
-                                                .map_err(LogManagerError::IoError)?;
+                                            file.seek(SeekFrom::Start(prev_position))?;
                                             self.current_position = prev_position;
                                             found_lsn = true;
                                         }
@@ -220,7 +212,7 @@ impl LogRecordIterator {
                                     break;
                                 }
                             },
-                            Err(e) => return Err(LogManagerError::IoError(e)),
+                            Err(e) => return Err(LogManagerError::FileError(LogFileError::IoError(e))),
                         }
                     },
                     Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
@@ -234,7 +226,7 @@ impl LogRecordIterator {
                             break;
                         }
                     },
-                    Err(e) => return Err(LogManagerError::IoError(e)),
+                    Err(e) => return Err(LogManagerError::FileError(LogFileError::IoError(e))),
                 }
             } else {
                 return Err(LogManagerError::InvalidState("No file open".to_string()));
@@ -258,8 +250,7 @@ impl LogRecordIterator {
         let file = self.current_file.as_mut().unwrap();
         
         // Seek to the current position
-        file.seek(SeekFrom::Start(self.current_position))
-            .map_err(LogManagerError::IoError)?;
+        file.seek(SeekFrom::Start(self.current_position))?;
         
         // Read the record size (4 bytes)
         let mut size_bytes = [0; 4];
@@ -276,7 +267,7 @@ impl LogRecordIterator {
                         
                         // Deserialize the record
                         let record = LogRecord::deserialize(&record_data)
-                            .map_err(LogManagerError::LogRecordError)?;
+                            .map_err(|e| LogManagerError::LogRecordError(e))?;
                         
                         // Update the current LSN
                         self.current_lsn = record.lsn + 1;
@@ -292,7 +283,7 @@ impl LogRecordIterator {
                             Ok(None)
                         }
                     },
-                    Err(e) => Err(LogManagerError::IoError(e)),
+                    Err(e) => Err(LogManagerError::FileError(LogFileError::IoError(e))),
                 }
             },
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
@@ -304,7 +295,7 @@ impl LogRecordIterator {
                     Ok(None)
                 }
             },
-            Err(e) => Err(LogManagerError::IoError(e)),
+            Err(e) => Err(LogManagerError::FileError(LogFileError::IoError(e))),
         }
     }
     
@@ -325,16 +316,13 @@ impl LogRecordIterator {
         let config = &file_manager.get_config();
         
         // Extract the current sequence number
-        let current_sequence = match LogFileManager::extract_sequence_from_path(config, current_path) {
+        let current_sequence = match extract_sequence_from_path(config, current_path) {
             Ok(seq) => seq,
             Err(_) => return Ok(false), // Invalid file name, can't determine sequence
         };
         
         // Find all log files
-        let log_files = match LogFileManager::find_log_files(config) {
-            Ok(files) => files,
-            Err(_) => return Ok(false), // Can't find log files
-        };
+        let log_files = find_log_files(config)?;
         
         // Find the file with the next sequence number
         for (sequence, path) in log_files {
@@ -344,22 +332,19 @@ impl LogRecordIterator {
                 match OpenOptions::new().read(true).open(&path) {
                     Ok(mut file) => {
                         // Read the header
-                        match LogFileHeader::read_from(&mut file) {
-                            Ok(header) => {
-                                // Validate the header
-                                if !header.validate() {
-                                    continue; // Invalid header, try next file
-                                }
-                                
-                                // Set up the iterator state for the new file
-                                self.current_file = Some(file);
-                                self.current_file_path = Some(path);
-                                self.current_position = header.header_size as u64;
-                                
-                                return Ok(true);
-                            },
-                            Err(_) => continue, // Can't read header, try next file
+                        let header = LogFileHeader::read_from(&mut file)?;
+                        
+                        // Validate the header
+                        if !header.validate() {
+                            continue; // Invalid header, try next file
                         }
+                        
+                        // Set up the iterator state for the new file
+                        self.current_file = Some(file);
+                        self.current_file_path = Some(path);
+                        self.current_position = header.header_size as u64;
+                        
+                        return Ok(true);
                     },
                     Err(_) => continue, // Can't open file, try next file
                 }
