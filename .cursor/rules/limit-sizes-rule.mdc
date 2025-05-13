@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Functions: 30-40 lines max
+Files: 200-400 lines max
+Organize code into modules more aggressively
+

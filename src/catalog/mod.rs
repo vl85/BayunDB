@@ -7,6 +7,10 @@ pub mod table;
 pub mod column;
 pub mod validation;
 pub mod validation_error;
+pub mod value;
+pub mod compatibility;
+pub mod expression;
+pub mod convert;
 
 // Re-export key types
 pub use self::schema::Schema;

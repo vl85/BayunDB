@@ -1,6 +1,0 @@
----
-description: 
-globs: 
-alwaysApply: true
----
-If a function/method/constructor is larger than 2500 symbols or 100 lines, try to split it. If a file is larger than 25000 symbols or 1000 lines - try to split it.
