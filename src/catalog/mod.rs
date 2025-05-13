@@ -6,13 +6,15 @@ pub mod schema;
 pub mod table;
 pub mod column;
 pub mod validation;
+pub mod validation_error;
 
 // Re-export key types
 pub use self::schema::Schema;
 pub use self::table::Table;
 pub use self::column::Column;
 pub use self::schema::DataType;
-pub use self::validation::{TypeValidator, ValidationError, ValidationResult};
+pub use self::validation::{TypeValidator};
+pub use self::validation_error::{ValidationError, ValidationResult};
 
 use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
@@ -338,4 +340,7 @@ impl Catalog {
 #[cfg(test)]
 mod tests {
 // // ... existing code ...
-} 
+}
+
+#[cfg(test)]
+pub mod validation_tests; 

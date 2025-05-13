@@ -25,6 +25,8 @@ src/query/
 └── mod.rs          # Module definitions
 ```
 
+> **Note:** As of July 2024, JOIN operations (NestedLoopJoin, HashJoin), aggregation (GROUP BY, HAVING, aggregate functions), and predicate pushdown are fully implemented and tested. See the [roadmap](../../project/roadmap.md) for current and future work.
+
 ## Phase 1: Basic Query Parsing
 
 - [x] Define token types for SQL lexing
@@ -93,9 +95,9 @@ src/query/
 
 ## Phase 5: Advanced Features
 
-- [ ] Add JOIN operations
-  - [ ] NestedLoopJoin
-  - [ ] HashJoin (if applicable)
+- [x] Add JOIN operations
+  - [x] NestedLoopJoin
+  - [x] HashJoin
 - [x] Implement aggregation operators
   - [x] GROUP BY support
   - [x] Aggregation functions (SUM, COUNT, AVG, MIN, MAX)
@@ -103,8 +105,8 @@ src/query/
 - [ ] Add sorting and LIMIT support
   - [ ] In-memory sorting
   - [ ] External sorting for large datasets
-- [ ] Implement query optimization techniques
-  - [ ] Predicate pushdown
+- [x] Implement query optimization techniques
+  - [x] Predicate pushdown
   - [ ] Join reordering
   - [ ] Index selection
 - [ ] Support subqueries
@@ -114,11 +116,4 @@ src/query/
 
 ## Immediate Next Steps
 
-1. [x] Create directory structure for query components
-2. [x] Define and implement token types for SQL lexing
-3. [x] Create basic AST node interfaces
-4. [x] Implement lexer for simple SELECT queries
-5. [x] Build parser for basic SELECT-FROM-WHERE queries
-6. [x] Implement logical plan representation and builder
-7. [x] Implement filter operator and expressions
-8. [x] Add query optimization and plan selection 
+See the [project roadmap](../../project/roadmap.md) for current priorities and future work. 
